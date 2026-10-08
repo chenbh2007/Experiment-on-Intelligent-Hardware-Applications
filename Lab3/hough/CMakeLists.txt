@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22)
+project(HoughDetectCircle)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(OpenCV 5.0 REQUIRED)
+add_executable(HoughDetectCircle HoughDetectCircle.cpp)
+target_link_libraries(HoughDetectCircle ${OpenCV_LIBS})
