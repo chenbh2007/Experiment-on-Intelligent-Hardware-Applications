@@ -2,6 +2,7 @@
 #include<vector>
 #include<opencv2/core.hpp>
 #include<opencv2/videoio.hpp>
+#include<opencv2/imgproc.hpp>
 #include<opencv2/imgcodecs.hpp>
 int main(){
     cv::VideoCapture Cam("/dev/video0");
@@ -11,17 +12,15 @@ int main(){
     }
     cv::Mat Ori;
     Cam>>Ori;
-    if (!Ori.empty()){
+    if (Ori.empty()){
         std::cout<<"Cannot capture the picture."<<std::endl;
         return -1;
     }
     cv::Mat Conv;
     cvtColor(Ori,Conv,cv::COLOR_BGR2HSV);
-    std::vector<uchar> bufOri,bufConv;
-    cv::imencode("png",Ori,&bufOri);
-    cv::imencode("png",Conv,&bufConv);
-    std::cout<<bufOri<<std::endl;
-    std::cout<<bufConv<<std::endl;
+    cv::imwrite("Ori.png",Ori);
+    cv::imwrite("Conv.png",Conv);
+    Cam.release();
     return 0;
 }
 

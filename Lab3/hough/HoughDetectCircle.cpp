@@ -6,7 +6,7 @@
 #include<opencv2/videoio.hpp>
 #include<opencv2/imgcodecs.hpp>
 int main(int argc,char **argv){
-    if (argc<2){
+    if (argc<3){
         std::cout<<"Too few argument."<<std::endl;
         return -1;
     }
@@ -22,6 +22,7 @@ int main(int argc,char **argv){
             return -1;
         }
         Cam>>ori;
+        Cam.release();
         if (ori.empty()){
             std::cout<<"Cannot capture the photo."<<std::endl;
             Cam.release();
@@ -39,7 +40,7 @@ int main(int argc,char **argv){
     cv::cvtColor(ori,gray,cv::COLOR_BGR2GRAY);
     cv::medianBlur(gray,gray,5);
     std::vector<cv::Vec3f> circles;
-    cv::HoughCircles(gray,circles,cv::HOUGH_GRADIENT,1,gray.rows/16);
+    cv::HoughCircles(gray,circles,cv::HOUGH_GRADIENT,1,gray.rows/16,100,90);
     for (size_t i=0;i<circles.size();i++){
         cv::Vec3i c=circles[i];
         cv::Point center(c[0],c[1]);

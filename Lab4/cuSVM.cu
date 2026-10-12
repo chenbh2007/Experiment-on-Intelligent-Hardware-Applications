@@ -21,7 +21,7 @@ static inline float Kernel(Vec *v1,Vec *v2){
     return expf(-SVM_Gamma*dist);
 }
 
-__device__ unsigned int g_block_done_count=0;
+__device__ inline unsigned int g_block_done_count=0;
 
 __device__ inline void warpReduceMax(float *val,int *idx){
     int offset;
