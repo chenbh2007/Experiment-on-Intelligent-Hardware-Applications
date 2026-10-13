@@ -58,6 +58,7 @@ int main(int argc,char **argv){
     cv::filter2D(m1,m1,m1.depth(),sobelx);
     cv::filter2D(m2,m2,m2.depth(),sobely);
     float *d_m1,*d_m2,*d_Ori,*d_res;
+    int cnt;
     size_t chars=nRows*nCols*sizeof(float);
     CHECK_CUDA(cudaMalloc((void**)&d_m1,chars));
     CHECK_CUDA(cudaMalloc((void**)&d_m2,chars));
@@ -76,38 +77,50 @@ int main(int argc,char **argv){
     CHECK_CUDA(cudaFree(d_res));
     sharpen.convertTo(sharpen,CV_8UC1);
     cv::threshold(sharpen,thresh,threshold,255,cv::THRESH_BINARY);
+    //cv::Mat kernel=cv::getStructuringElement(cv::MORPH_RECT,cv::Size(3,3));
+   // cv::morphologyEx(thresh,thresh,cv::MORPH_OPEN,kernel);
     cv::imwrite("sharpen.png",sharpen);
     cv::imwrite("thresh.png",thresh);
     std::vector<std::vector<cv::Point>> contours;
     std::vector<cv::Vec4i> h;
-    cv::findContours(thresh,contours,h,cv::RETR_LIST,cv::CHAIN_APPROX_SIMPLE);
-    int cnt=0;
-    for (auto it=contours.begin();it!=contours.end();++it){
-        if (cv::contourArea(*it)<5000||cv::contourArea(*it)>0.8*nCols*nRows) continue;
+    cv::findContours(thresh,contours,h,cv::RETR_EXTERNAL,cv::CHAIN_APPROX_NONE);
+    for (int i=0;i<contours.size();i++){
+        if (cv::contourArea(contours[i])>0.5*nCols*nRows) continue;
         std::vector<cv::Point2f> rect; 
         std::vector<cv::Point2f> src;
+        char filename[20];
+        std::stringstream convs;
         src.push_back(cv::Point2f(nCols,nRows));
         src.push_back(cv::Point2f(0,nRows));
         src.push_back(cv::Point2f(0,0));
         src.push_back(cv::Point2f(nCols,0));
-        cv::approxPolyDP((*it),rect,0.02*cv::arcLength(*it,true),true);
-        if (rect.size()!=4||!cv::isContourConvex(rect)) continue;
+        std::vector<cv::Point> hull;
+        cv::convexHull(contours[i],hull);
+        if (cv::contourArea(hull)<0.01*nCols*nRows) continue;
+        cv::Mat edgeImage=cv::Mat::zeros(nRows,nCols,CV_8UC3);
+        cv::drawContours(edgeImage,contours,i,cv::Scalar(255,0,255),-1);
+        convs<<"edge"<<i<<".png"<<std::endl;
+        convs>>filename;
+        convs.clear();
+        cv::imwrite(filename,edgeImage);
+        cv::approxPolyDP(hull,rect,0.02*cv::arcLength(hull,true),true);
+        std::cout<<i<<":"<<rect.size()<<std::endl;
+        if (rect.size()!=4||!cv::isContourConvex(rect)) continue; 
         cnt++;
-        for (int i=0;i<4;i++){
-            if (rect[i].x+rect[i].y<src[0].x+src[0].y) src[0]=rect[i];
-            if (rect[i].x+rect[i].y>src[2].x+src[2].y) src[2]=rect[i];
-            if (rect[i].x-rect[i].y>src[1].x-src[1].y) src[1]=rect[i];
-            if (rect[i].x-rect[i].y<src[3].x-src[3].y) src[3]=rect[i];
+        for (int j=0;j<4;j++){
+            if (rect[j].x+rect[j].y<src[0].x+src[0].y) src[0]=rect[j];
+            if (rect[j].x+rect[j].y>src[2].x+src[2].y) src[2]=rect[j];
+            if (rect[j].x-rect[j].y>src[1].x-src[1].y) src[1]=rect[j];
+            if (rect[j].x-rect[j].y<src[3].x-src[3].y) src[3]=rect[j];
         }
         cv::Mat trans=cv::getPerspectiveTransform(src,dst);
         cv::Mat res;
         cv::warpPerspective(ori,res,trans,cv::Size(dstWidth,dstHeight));
-        std::stringstream convs;
-        convs<<"result"<<cnt<<".png"<<std::endl;
-        char filename[25];
+        convs<<"result"<<i<<".png"<<std::endl;
         convs>>filename;
         convs.clear();
         cv::imwrite(filename,res);
     }
+    std::cout<<cnt;
     return 0;
 }
