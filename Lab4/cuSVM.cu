@@ -21,7 +21,7 @@ static inline float Kernel(Vec *v1,Vec *v2){
     return expf(-SVM_Gamma*dist);
 }
 
-__device__ inline unsigned int g_block_done_count=0;
+__device__ static unsigned int g_block_done_count=0;
 
 __device__ inline void warpReduceMax(float *val,int *idx){
     int offset;
@@ -203,10 +203,15 @@ __global__ void alpha1UpdateCache(float *d_Alpha,signed char *d_Y,float *d_E,int
     }
 }
 
-static inline int select_alpha1(float *d_Alpha,signed char *d_Y,float *d_E,int n,float *d_cache,float *d_block_max,int *d_block_idx,float *d_max,int *d_idx,float C){
+static inline int select_alpha1(float *d_Alpha,signed char *d_Y,float *d_E,int n,float *d_cache,float *d_block_max,int *d_block_idx,float *d_max,int *d_idx,float C,int skip_a1){
     int block1d=256;
     int grid1d=(n+255)/256;
-    alpha1UpdateCache<<<grid1d,block1d>>>(d_Alpha,d_Y,d_E,n,C,d_cache);
+    if (skip_a1==-1){
+        alpha1UpdateCache<<<grid1d,block1d>>>(d_Alpha,d_Y,d_E,n,C,d_cache);
+    }
+    else{
+        cudaMemset(d_cache+skip_a1,0,sizeof(float));
+    }
     gridReduceMax<<<grid1d,block1d>>>(SVM_Tol,0,d_cache,n,d_block_max,d_block_idx,d_max,d_idx);
     int index;
     cudaMemcpy(&index,d_idx,sizeof(int),cudaMemcpyDeviceToHost);
@@ -333,9 +338,9 @@ static inline int selectalpha2(float *d_Alpha,float *d_E,float *d_K,signed char 
     float h_delta2;
     gridReduceMax<<<grid1d,block1d>>>(SVM_Eps,1,d_delta2,n,d_block_max,d_block_idx,d_max,d_idx);
     cudaMemcpy(&a2,d_idx,sizeof(int),cudaMemcpyDeviceToHost);
-    cudaMemcpy(&h_delta2,d_delta2+a2,sizeof(float),cudaMemcpyDeviceToHost);
     if (a2!=-1){
         float h_alpha1,h_alpha2;
+        cudaMemcpy(&h_delta2,d_delta2+a2,sizeof(float),cudaMemcpyDeviceToHost);
         cudaMemcpy(&h_alpha1,d_Alpha+alpha1,sizeof(float),cudaMemcpyDeviceToHost);
         cudaMemcpy(&h_alpha2,d_Alpha+a2,sizeof(float),cudaMemcpyDeviceToHost);
         float h_delta1,h_deltab;
@@ -392,11 +397,14 @@ int Train(Model *M,int Cyc){
     cudaMemcpy(d_alpha,M->Alpha,n*sizeof(float),cudaMemcpyHostToDevice);
     cudaMemcpy(d_E,M->E,n*sizeof(float),cudaMemcpyHostToDevice);
     cudaMemcpy(d_Y,M->Data->Y,n*sizeof(unsigned char),cudaMemcpyHostToDevice);
+    int skip_a1=-1;
+    int a1;
     for (i=0;i<Cyc;i++){
-        int a1=select_alpha1(d_alpha,d_Y,d_E,n,d_cache,d_block_max,d_block_idx,d_max,d_idx,M->C);
+        a1=select_alpha1(d_alpha,d_Y,d_E,n,d_cache,d_block_max,d_block_idx,d_max,d_idx,M->C,skip_a1);
         if (a1==-1) goto gracereturn;
         int a2=selectalpha2(d_alpha,d_E,d_K,d_Y,M->C,n,a1,d_delta1,d_delta2,d_deltab,d_block_max,d_block_idx,d_max,d_idx,&M->B);
-        if (a2==-1) goto gracereturn;
+        if (a2==-1) skip_a1=a1;
+        else skip_a1=-1;
     }
 gracereturn:
     cudaMemcpy(M->Alpha,d_alpha,n*sizeof(float),cudaMemcpyDeviceToHost);
@@ -423,7 +431,8 @@ gracereturn:
     cudaFree(d_block_idx);
     cudaFree(d_max);
     cudaFree(d_idx);
-    return 0;
+    if (a1==-1) return 0;
+    else return -1;
 }
 
 float Predict(Model *M,Vec *X){
