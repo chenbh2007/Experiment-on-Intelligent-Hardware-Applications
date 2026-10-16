@@ -3,8 +3,6 @@
 #include<math.h>
 #include<stdlib.h>
 #include<string.h>
-#include<time.h>
-#include<signal.h>
 #include<cuda_runtime.h>
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))

@@ -3,8 +3,6 @@
 #include<math.h>
 #include<stdlib.h>
 #include<string.h>
-#include<time.h>
-#include<signal.h>
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 static inline float Kernel(Vec *v1,Vec *v2){
