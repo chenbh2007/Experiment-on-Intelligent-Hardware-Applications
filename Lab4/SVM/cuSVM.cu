@@ -1,5 +1,7 @@
 #include"cuSVM.h"
 #include<stdio.h>
+#include<byteswap.h>
+#include<stdint.h>
 #include<math.h>
 #include<stdlib.h>
 #include<string.h>
@@ -129,29 +131,56 @@ __global__ void gaussKernel(float *d_Vec,const int n,const int l,float *d_K){
         }
     }
 }
-void SetUpData(Model *M,const char *file_name){
-    FILE *f=fopen(file_name,"r");
-    if (f){
-        int n,v;
-        M->Data=(DataSet *)malloc(sizeof(DataSet));
-        fscanf(f,"%d%d",&n,&v);
-        M->Data->Num=n;
-        M->Data->Data=(Vec **)malloc(n*sizeof(Vec *));
-        M->Data->Y=(signed char *)malloc(n*sizeof(signed char));
-        int i,tmp_y;
-        for (i=0;i<n;i++){
-            M->Data->Data[i]=(Vec *)malloc(sizeof(Vec));
-            M->Data->Data[i]->Dim=v;
-            M->Data->Data[i]->X=(float *)malloc(v*sizeof(float));
-            int j;
-            for (j=0;j<v;j++)
-                fscanf(f,"%f",&M->Data->Data[i]->X[j]);
-            fscanf(f,"%d",&tmp_y);
-            M->Data->Y[i]=(signed char)tmp_y;
+
+int SetUpData(DataSet *db,const char *dataname,const char *labelname){
+    FILE *data=fopen(dataname,"rb+");
+    FILE *lab=fopen(labelname,"rb+");
+    if (data&&lab){
+        uint8_t cache[4];
+        fread(cache,1,4,data);
+        if (cache[2]!=0x0D||cache[3]!=2){
+            printf("Data type is not float.\nAbort.\n");
+            fclose(data);
+            fclose(lab);
+            return -1;
         }
-        fclose(f);
+        fread(cache,1,4,lab);
+        if (cache[2]!=0x09||cache[3]!=1){
+            printf("Label type is not signed char.\nAbort.\n");
+            fclose(data);
+            fclose(lab);
+            return -1;
+        }
+        uint32_t size,tmp;
+        fread(&size,sizeof(size),1,data);
+        fread(&tmp,sizeof(tmp),1,lab);
+        if (size!=tmp){
+            printf("Data doesn't fit label.\nAbort.\n");
+            fclose(data);
+            fclose(lab);
+            return -1;
+        }
+        uint32_t dim;
+        fread(&dim,sizeof(dim),1,data);
+        int i;
+        db->Num=(int32_t)size;
+        db->Y=(signed char*)malloc(size*sizeof(signed char));
+        db->Data=(Vec**)malloc(size*sizeof(Vec*));
+        fread(db->Y,1,size,lab);
+        for (i=0;i<size;i++){
+            db->Data[i]=(Vec*)malloc(sizeof(Vec));
+            db->Data[i]->Dim=dim;
+            db->Data[i]->X=(float *)malloc(dim*sizeof(float));
+            fread(db->Data[i]->X,sizeof(float),dim,data);
+        }
+        fclose(lab);
+        fclose(data);
+        return 0;
     }
-    return;
+    printf("Data file not found.\n");
+    if (data) fclose(data);
+    if (lab) fclose(lab);
+    return -1;
 }
 void ModelInit(Model *M,float _C){
     if (!M->Data){
@@ -230,53 +259,67 @@ static inline void update_E(float *d_E,signed char *d_Y,float *d_K,int n,float d
     return;
 }
 
-void SaveState(Model *M,const char *file_name){
-    FILE *f=fopen(file_name,"w");
-    if (f){
-        fprintf(f,"%d %.8f %.8f\n",M->Data->Num,M->B,M->C);
-        int i;
-        for (i=0;i<M->Data->Num;i++)
-            fprintf(f,"%.8f %d %d %.8f\n",M->Alpha[i],M->Data->Y[i],M->IS_VALID_E[i],M->E[i]);
-        fclose(f);
-        printf("Save Successfully.\n");
+void SaveState(Model *M,const char *file_name,const char *B_C_lab_name){
+    FILE *f=fopen(file_name,"wb+");
+    FILE *fl=fopen(B_C_lab_name,"wb+");
+    if (!f||!fl){
+        if (f) fclose(f);
+        if (fl) fclose(fl);
+        printf("Failed to save.\n");
+        return;
     }
-    else
-        printf("Save Failed!\n");
+    uint8_t buffer[4]={0x00,0x00,0x0D,0x02};
+    fwrite(buffer,1,4,f);
+    uint32_t dim=M->Data->Data[0]->Dim+2;
+    uint32_t n=M->Data->Num;
+    fwrite(&n,sizeof(n),1,f);
+    fwrite(&dim,sizeof(dim),1,f);
+    buffer[2]=0x09;
+    buffer[3]=0x01;
+    fwrite(buffer,1,4,fl);
+    fwrite(&n,sizeof(n),1,fl);
+    int i;
+    for (i=0;i<n;i++){
+        fwrite(M->Data->Data[i]->X,sizeof(float),dim-2,f);
+        fwrite(&M->Alpha[i],sizeof(float),1,f);
+        fwrite(&M->E[i],sizeof(float),1,f);
+    }
+    fwrite(M->Data->Y,1,n,fl);
+    fwrite(&M->B,sizeof(float),1,fl);
+    fwrite(&M->C,sizeof(float),1,fl);
+    fclose(f);
+    fclose(fl);
     return;
 }
-int LoadState(Model *M,const char *state_file,const char *Data_set){
-    FILE *f1=fopen(state_file,"r"),*f2=fopen(Data_set,"r");
-    if (!f1){
-        printf("State File Not Found.\n");
-        if (f2) fclose(f2);
-        return -1;
-    }
-    if (!f2){
-        printf("Data Set Not Found.\n");
-        if (f1) fclose(f1);
-        return -2;
-    }
-    fclose(f2);
-    SetUpData(M,Data_set);
-    int n;
-    float b,c;
-    fscanf(f1,"%d%f%f",&n,&b,&c);
-    if (n!=M->Data->Num){
-        printf("Data Set doesn't Match the State File.\n");
-        fclose(f1);
+int LoadState(Model *M,const char *state_file,const char *lab_set){
+    if (!M->Data) M->Data=(DataSet*)malloc(sizeof(DataSet));
+    M->Data->Data=NULL;
+    M->Data->Y=NULL;
+    if(SetUpData(M->Data,state_file,lab_set)!=0){
         SVMFreeDataSet(M->Data);
         M->Data=NULL;
-        return -3;
+        return -1;
     }
-    ModelInit(M,c);
-    M->B=b;
-    int tmp_y,i,tmp_valid_e;
-    for (i=0;i<M->Data->Num;i++){
-        fscanf(f1,"%f%d%d%f",&M->Alpha[i],&tmp_y,&tmp_valid_e,&M->E[i]);
-        M->IS_VALID_E[i]=(unsigned char)tmp_valid_e;
+    FILE *f=fopen(lab_set,"rb+");
+    if (!f){
+        return -1;
     }
-    printf("Load Successfully.\n");
-    fclose(f1);
+    fseek(f,-(long)(2*sizeof(float)),SEEK_END);
+    fread(&M->B,sizeof(float),1,f);
+    fread(&M->C,sizeof(float),1,f);
+    fclose(f);
+    int i,n=M->Data->Num;
+    M->Alpha=(float*)malloc(n*sizeof(float));
+    M->E=(float*)malloc(n*sizeof(float));
+    M->IS_VALID_E=(unsigned char*)malloc(n*sizeof(unsigned char));
+    M->K_ij=NULL;
+    for (i=0;i<n;i++){
+        M->Alpha[i]=M->Data->Data[i]->X[M->Data->Data[i]->Dim-2];
+        M->E[i]=M->Data->Data[i]->X[M->Data->Data[i]->Dim-1];
+        M->Data->Data[i]->Dim-=2;
+        if (M->Alpha[i]>SVM_Eps) M->IS_VALID_E[i]=1;
+        else M->IS_VALID_E[i]=0;
+    }
     return 0;
 }
 
@@ -327,7 +370,6 @@ __global__ void updateDelta(float *d_alpha,float *d_E,float *d_K,signed char *d_
     }
 } 
 
-
 static inline int selectalpha2(float *d_Alpha,float *d_E,float *d_K,signed char *d_Y,float C,int n,int alpha1,float *d_delta1,float *d_delta2,float *d_deltab,float *d_block_max,int *d_block_idx,float *d_max,int *d_idx,float *B){
     int block1d=256;
     int grid1d=(n+255)/256;
@@ -357,7 +399,7 @@ static inline int selectalpha2(float *d_Alpha,float *d_E,float *d_K,signed char 
 __global__ void updateISVALIDE(unsigned char *d_IS_VALID_E,float *d_alpha,int n,float C){
     int i=blockIdx.x*blockDim.x+threadIdx.x;
     if (i<n){
-        if (d_alpha[i]>SVM_Eps&&d_alpha[i]<C-SVM_Eps){
+        if (d_alpha[i]>SVM_Eps){
             d_IS_VALID_E[i]=1;
         }
         else d_IS_VALID_E[i]=0;
@@ -433,6 +475,101 @@ gracereturn:
     else return -1;
 }
 
+typedef struct node{
+    int idx;
+    node *next;
+}node;
+
+void copyVec(Vec *src,Vec *dst){
+    int v=src->Dim;
+    dst->X=(float *)malloc(v*sizeof(float));
+    dst->Dim=v;
+    memcpy(dst->X,src->X,v*sizeof(float));
+    return;
+}
+
+void extractSV(Model *src,Model *dst){
+    int n=src->Data->Num;
+    int cnt=0,i;
+    node *SV=(node*)malloc(sizeof(node));
+    node *p=SV;
+    SV->next=NULL;
+    for (i=0;i<n;i++){
+        if (src->Alpha[i]>SVM_Eps){
+            cnt++;
+            p->idx=i;
+            p->next=(node*)malloc(sizeof(node));
+            p=p->next;
+            p->next=NULL;
+        }
+    }
+    dst->Data=(DataSet*)malloc(sizeof(DataSet));
+    dst->Data->Y=(signed char*)malloc(cnt*sizeof(signed char));
+    dst->Data->Data=(Vec **)malloc(cnt*sizeof(Vec*));
+    dst->Data->Num=cnt;
+    dst->IS_VALID_E=(unsigned char*)malloc(cnt*sizeof(unsigned char));
+    dst->Alpha=(float *)malloc(cnt*sizeof(float));
+    dst->E=(float *)malloc(cnt*sizeof(float));
+    dst->B=src->B;
+    dst->C=src->C;
+    dst->K_ij=NULL;
+    p=SV;
+    for (i=0;i<cnt&&p!=NULL;i++){
+        dst->Data->Data[i]=(Vec *)malloc(sizeof(Vec));
+        copyVec(src->Data->Data[p->idx],dst->Data->Data[i]);
+        dst->Data->Y[i]=src->Data->Y[p->idx];
+        dst->E[i]=src->E[p->idx];
+        dst->IS_VALID_E[i]=1;
+        dst->Alpha[i]=src->Alpha[p->idx];
+        p=p->next;
+    }
+    p=SV->next;
+    while (p!=NULL){
+        free(SV);
+        SV=p;
+        p=SV->next;
+    }
+    free(SV);
+    return;
+}
+
+
+void dataSetSlice(DataSet *src,DataSet *dst,int beg,int end){
+    int n=end-beg;
+    if (end>src->Num) n=src->Num-beg;
+    dst->Num=n;
+    dst->Data=(Vec **)malloc(n*sizeof(Vec*));
+    dst->Y=(signed char*)malloc(n*sizeof(unsigned char));
+    int i;
+    for (i=0;i<n;i++){
+        dst->Data[i]=(Vec*)malloc(sizeof(Vec));
+        copyVec(src->Data[i+beg],dst->Data[i]);
+        dst->Y[i]=src->Y[i+beg];
+    }
+    return;
+}
+
+void mergeDataSet(DataSet *src1,DataSet *src2,DataSet *dst){
+    int n1=src1->Num;
+    int n2=src2->Num;
+    int n=n1+n2;
+    dst->Num=n;
+    dst->Data=(Vec**)malloc(n*sizeof(Vec*));
+    dst->Y=(signed char*)malloc(n*sizeof(signed char));
+    int i;
+    for (i=0;i<n1;i++){
+        dst->Data[i]=(Vec*)malloc(sizeof(Vec));
+        copyVec(src1->Data[i],dst->Data[i]);
+        dst->Y[i]=src1->Y[i];
+    }
+    for (i=n1;i<n;i++){
+        dst->Data[i]=(Vec*)malloc(sizeof(Vec));
+        copyVec(src2->Data[i-n1],dst->Data[i]);
+        dst->Y[i]=src2->Y[i-n1];
+    }
+    return;
+}
+
 float Predict(Model *M,Vec *X){
     float Res=M->B;
     int i;
@@ -442,6 +579,7 @@ float Predict(Model *M,Vec *X){
             Res+=M->Alpha[i]*Kernel(X,M->Data->Data[i])*M->Data->Y[i];
     return Res;
 }
+
 void SVMFreeVec(Vec *V){
     SVMCleanUpVec(V);
     free(V);

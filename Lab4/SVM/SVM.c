@@ -279,10 +279,10 @@ loop:
         if (alpha1==-1)  
             alpha1=select_alpha1(M,1);
         if (alpha1==-1){
-            return -1;
+            return 0;
         }
     }
-    return 0;
+    return -1;
 }
 int TrainOnline(Model *M,int Cyc){
     int i,n=M->Data->Num;
@@ -365,10 +365,10 @@ loop:
         if (alpha1==-1)  
             alpha1=select_alpha1_online(M,1);
         if (alpha1==-1){
-            return -1;
+            return 0;
         }
     }
-    return 0;
+    return -1;
 }
 
 float Predict(Model *M,Vec *X){
