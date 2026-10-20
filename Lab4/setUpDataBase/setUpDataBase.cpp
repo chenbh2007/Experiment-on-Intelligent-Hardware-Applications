@@ -1,7 +1,9 @@
 #include<vector>
 #include<iostream>
 #include<fstream>
+#include<byteswap.h>
 #include<string>
+#include<cstdint>
 #include<sstream>
 #include<cstdio>
 int main(int argc,char **argv){
@@ -11,33 +13,37 @@ int main(int argc,char **argv){
     }
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
-    std::ifstream rawdb(argv[1]);
+    std::ifstream rawlab(argv[2],std::ios::binary);
     std::stringstream ss;
-    ss<<argv[2]<<std::endl<<argv[3];
-    int y,n;
-    ss>>y>>n;
+    ss<<argv[1];
+    std::uint32_t y,n;
+    std::uint8_t buffer[4];
+    ss>>y;
     ss.clear();
-    ss<<"database"<<y<<".db";
-    char dbname[20];
-    ss>>dbname;
-    ss.clear();
-    std::ofstream db(dbname);
-    std::string str;
-    int v=324;
-    db<<n<<" "<<v<<std::endl;
-    for (;n>0;n--){
-        for (int i=0;i<v;i++){
-            float tmp;
-            rawdb>>tmp;
-            db<<tmp<<" ";
-        }
-        int l;
-        rawdb>>l;
-        l=(l==y)?1:-1;
-        db<<l<<std::endl;
-        ss.clear();
+    std::ofstream newlab(argv[3],std::ios::binary);
+    rawlab.read((char*)buffer,4);
+    if (buffer[2]!=0x08||buffer[3]!=0x01){
+        std::cout<<"Raw label doesn't fit. Abort."<<std::endl;
+        rawlab.close();
+        newlab.close();
+        return 0;
     }
-    db.close();
-    rawdb.close();
+    rawlab.read((char*)&n,sizeof(uint32_t));
+    n=bswap_32(n);
+    char cache[4]={0x00,0x00,0x09,0x01};
+    newlab.write(cache,sizeof(cache));
+    newlab.write((char*)&n,sizeof(n));
+    for (;n>0;n--){
+        std::uint8_t l;
+        rawlab.read((char*)&l,sizeof(uint8_t));
+        std::int8_t nl;
+        if (l==y){
+            nl=1;
+        }
+        else nl=-1;
+        newlab.write((char*)&nl,sizeof(int8_t));
+    }
+    rawlab.close();
+    newlab.close();
     return 0;
 }

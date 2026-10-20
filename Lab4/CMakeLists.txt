@@ -15,6 +15,10 @@ add_executable(picToVec getRawData/picToVec.cpp)
 target_include_directories(picToVec PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(picToVec PRIVATE ${OpenCV_LIBS})
 
+add_executable(idx2db getRawData/getRawDatafromidx.cpp)
+target_include_directories(idx2db PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(idx2db PRIVATE ${OpenCV_LIBS})
+
 add_executable(raw2db setUpDataBase/setUpDataBase.cpp)
 add_executable(train train.cpp SVM/cuSVM.cu)
 target_include_directories(train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
