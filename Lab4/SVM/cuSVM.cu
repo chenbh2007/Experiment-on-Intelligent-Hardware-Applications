@@ -122,10 +122,10 @@ __global__ void gaussKernel(float *d_src1,float *d_src2,const int n1,const int n
         float dist=0;
         int k;
         for (k=0;k<l;k++){
-            float dx=d_src2[i*l+k]-d_src1[j*l+k];
+            float dx=d_src2[(size_t)i*l+k]-d_src1[(size_t)j*l+k];
             dist+=dx*dx;
         }
-        d_K[i*n1+j]=expf(-SVM_Gamma*dist);
+        d_K[(size_t)i*n1+j]=expf(-SVM_Gamma*dist);
     }
 }
 
@@ -203,17 +203,17 @@ void K_init(Model *M,float *d_K){
     int n=M->Data->Num,Dim=M->Data->Data[0]->Dim;
     int i;
     if (!M->K_ij){
-        M->K_ij=(float *)malloc(n*n*sizeof(float));
+        M->K_ij=(float *)malloc((size_t)n*n*sizeof(float));
     }
     float *d_Vec;
-    cudaMalloc((void **)&d_Vec,n*Dim*sizeof(float));
+    cudaMalloc((void **)&d_Vec,(size_t)n*Dim*sizeof(float));
     for (i=0;i<n;i++){
         cudaMemcpy(d_Vec+i*Dim,M->Data->Data[i]->X,Dim*sizeof(float),cudaMemcpyHostToDevice);
     }
     dim3 block2d(16,16);
     dim3 grid2d((n+15)/16,(n+15)/16);
     gaussKernel<<<grid2d,block2d>>>(d_Vec,d_Vec,n,n,Dim,d_K);
-    cudaMemcpy(M->K_ij,d_K,n*n*sizeof(float),cudaMemcpyDeviceToHost);
+    cudaMemcpy(M->K_ij,d_K,(size_t)n*n*sizeof(float),cudaMemcpyDeviceToHost);
     cudaFree(d_Vec);
 }
 
@@ -245,7 +245,7 @@ static inline int select_alpha1(float *d_Alpha,signed char *d_Y,float *d_E,int n
 __global__ void updateEKernel(float *d_E,signed char *d_Y,float *d_K,int n,float d1,float d2,float db,int a1,int a2){
     int i=blockIdx.x*blockDim.x+threadIdx.x;
     if (i<n){
-        d_E[i]+=d_Y[a1]*d1*d_K[a1*n+i]+d_Y[a2]*d2*d_K[a2*n+i]+db;
+        d_E[i]+=d_Y[a1]*d1*d_K[(size_t)a1*n+i]+d_Y[a2]*d2*d_K[(size_t)a2*n+i]+db;
     }
 }
 
@@ -323,7 +323,7 @@ int LoadState(Model *M,const char *state_file,const char *lab_set){
 __global__ void updateDelta(float *d_alpha,float *d_E,float *d_K,signed char *d_Y,float C,int n,int a1,float *d_delta1,float *d_delta2,float *d_deltab){
     int i=blockIdx.x*blockDim.x+threadIdx.x;
     if (i<n){
-    if (d_K[a1*n+i]-1>-SVM_Eps&&d_K[a1*n+i]-1<SVM_Eps||i==a1){
+    if (d_K[(size_t)a1*n+i]-1>-SVM_Eps&&d_K[(size_t)a1*n+i]-1<SVM_Eps||i==a1){
         d_delta2[i]=0.0f;
         d_delta1[i]=0.0f;
         d_deltab[i]=0.0f;
@@ -332,7 +332,7 @@ __global__ void updateDelta(float *d_alpha,float *d_E,float *d_K,signed char *d_
         float E1=d_E[a1];
         signed char Y1=d_Y[a1];
         float alpha1=d_alpha[a1];
-        float d2=d_Y[i]*(E1-d_E[i])/(2-2*d_K[n*a1+i]);
+        float d2=d_Y[i]*(E1-d_E[i])/(2-2*d_K[(size_t)n*a1+i]);
         float L,H;
         if (Y1==d_Y[i]){
             L=MAX(0,alpha1+d_alpha[i]-C);
@@ -352,8 +352,8 @@ __global__ void updateDelta(float *d_alpha,float *d_E,float *d_K,signed char *d_
         d2=tmpalpha2-d_alpha[i];
         float d1=-Y1*d_Y[i]*d2;
         float tmpalpha1=d1+alpha1;
-        float b1=-E1-Y1*d1-d_Y[i]*d2*d_K[n*a1+i];
-        float b2=-d_E[i]-Y1*d1*d_K[n*a1+i]-d_Y[i]*d2;
+        float b1=-E1-Y1*d1-d_Y[i]*d2*d_K[(size_t)n*a1+i];
+        float b2=-d_E[i]-Y1*d1*d_K[(size_t)n*a1+i]-d_Y[i]*d2;
         if (tmpalpha1>SVM_Eps&&tmpalpha1<C-SVM_Eps){
             d_deltab[i]=b1;
         }
@@ -406,10 +406,10 @@ __global__ void updateISVALIDE(unsigned char *d_IS_VALID_E,float *d_alpha,int n,
 int Train(Model *M,int Cyc){
     int n=M->Data->Num,i;
     float *d_K;
-    cudaMalloc((void **)&d_K,n*n*sizeof(float));
+    cudaMalloc((void **)&d_K,(size_t)n*n*sizeof(float));
     if (!M->K_ij) K_init(M,d_K);
     else{
-        cudaMemcpy(d_K,M->K_ij,n*n*sizeof(float),cudaMemcpyHostToDevice);
+        cudaMemcpy(d_K,M->K_ij,(size_t)n*n*sizeof(float),cudaMemcpyHostToDevice);
     }
 
     float *d_alpha,*d_E,*d_delta1,*d_delta2,*d_deltab;
@@ -627,11 +627,12 @@ int benchmark(Model **M,DataSet *testSet,int n){
     h_Num[0]=0;
     for (j=0;j<n;j++){
         h_Num[j+1]=h_Num[j]+M[j]->Data->Num;
-        for (i=0;i<M[j]->Data->Num;i++)
-            memcpy(h_V+(size_t)((size_t)h_Num[j]+i)*v,M[j]->Data->Data[i]->X,(size_t)v*sizeof(float));
     }
     Num=h_Num[n];
     h_V=(float*)malloc((size_t)v*Num*sizeof(float));
+    for (j=0;j<n;j++)
+        for (i=0;i<M[j]->Data->Num;i++)
+            memcpy(h_V+(size_t)((size_t)h_Num[j]+i)*v,M[j]->Data->Data[i]->X,(size_t)v*sizeof(float));
     for (i=0;i<testSet->Num;i++)
         memcpy(h_Vtest+(size_t)i*v,testSet->Data[i]->X,(size_t)v*sizeof(float));
     cudaMalloc((void**)&d_V,(size_t)Num*v*sizeof(float));
