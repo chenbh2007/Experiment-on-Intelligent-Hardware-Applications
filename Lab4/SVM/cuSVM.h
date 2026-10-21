@@ -44,6 +44,7 @@ int LoadState(Model *M,const char *StateFile,const char *labfile);
 int Train(Model *M,int Step);
 void K_init(Model *M,float *d_K);
 float Predict(Model *M,Vec *X);
+int benchmark(Model **M,DataSet *test,int n);
 
 void copyVec(Vec *src,Vec *dst);
 void extractSV(Model *src,Model *dst);
@@ -52,8 +53,8 @@ void dataSetSlice(DataSet *src,DataSet *dst,int beg,int end);
 
 void SVMFreeVec(Vec *V);
 void SVMFreeDataSet(DataSet *D);
-void SVMFreeModel(Model *M,int n);
-void SVMCleanUpModel(Model *M,int n);
+void SVMFreeModel(Model *M);
+void SVMCleanUpModel(Model *M);
 void SVMCleanUpDataSet(DataSet *D);
 void SVMCleanUpVec(Vec *V);
 #ifdef __cplusplus

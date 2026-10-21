@@ -68,7 +68,7 @@ int main(int argc,char **argv){
             return -1;
         }
         svm::extractSV(&models,&SV[i]);
-        svm::SVMCleanUpModel(&models,models.Data->Num);
+        svm::SVMCleanUpModel(&models);
     }
     int err=0;
     for (int i=0;i<testset.Num;i++){
@@ -90,7 +90,7 @@ int main(int argc,char **argv){
     }
     std::cout<<"Error rate: "<<(float)err/(float)testset.Num<<std::endl;
     for (int i=0;i<10;i++){
-        svm::SVMCleanUpModel(&SV[i],SV[i].Data->Num);
+        svm::SVMCleanUpModel(&SV[i]);
     }
     svm::SVMCleanUpDataSet(&testset);
     return 0;

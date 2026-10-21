@@ -115,20 +115,17 @@ __global__ void gridReduceMax(const float tol,const unsigned char is_abs,const f
         }
     }
 }
-__global__ void gaussKernel(float *d_Vec,const int n,const int l,float *d_K){
+__global__ void gaussKernel(float *d_src1,float *d_src2,const int n1,const int n2,const int l,float *d_K){
     int j=blockIdx.x*blockDim.x+threadIdx.x;
     int i=blockIdx.y*blockDim.y+threadIdx.y;
-    if (i<n&&j<n){
-        if (i==j) d_K[i*n+j]=1.0f;
-        else{
-            float dist=0;
-            int k;
-            for (k=0;k<l;k++){
-                float dx=d_Vec[i*l+k]-d_Vec[j*l+k];
-                dist+=dx*dx;
-            }
-            d_K[i*n+j]=expf(-SVM_Gamma*dist);
+    if (i<n2&&j<n1){
+        float dist=0;
+        int k;
+        for (k=0;k<l;k++){
+            float dx=d_src2[i*l+k]-d_src1[j*l+k];
+            dist+=dx*dx;
         }
+        d_K[i*n1+j]=expf(-SVM_Gamma*dist);
     }
 }
 
@@ -215,7 +212,7 @@ void K_init(Model *M,float *d_K){
     }
     dim3 block2d(16,16);
     dim3 grid2d((n+15)/16,(n+15)/16);
-    gaussKernel<<<grid2d,block2d>>>(d_Vec,n,Dim,d_K);
+    gaussKernel<<<grid2d,block2d>>>(d_Vec,d_Vec,n,n,Dim,d_K);
     cudaMemcpy(M->K_ij,d_K,n*n*sizeof(float),cudaMemcpyDeviceToHost);
     cudaFree(d_Vec);
 }
@@ -580,6 +577,114 @@ float Predict(Model *M,Vec *X){
     return Res;
 }
 
+__global__ void predictKernel(float *d_K,float *d_Alpha,int* d_Num,int n2,int n,float *d_b,float *d_Predict){
+    int i=blockIdx.x*blockDim.x+threadIdx.x;
+    int modelidx=i%n;
+    int testidx=i/n;
+    if (testidx<n2){
+        int k;
+        int Num=d_Num[n];
+        d_Predict[i]=d_b[modelidx];
+        for (k=d_Num[modelidx];k<d_Num[modelidx+1];k++){
+            d_Predict[i]+=d_K[(size_t)testidx*Num+k]*d_Alpha[(size_t)k];
+        }
+    }
+}
+
+__global__ void resultKernel(float *d_Predict,signed char *d_Expect,int size,int n,int *d_res){
+    int i=blockIdx.x*blockDim.x+threadIdx.x;
+    if (i<size){
+        if (n==1){
+            signed char y;
+            if (d_Predict[i]>=0) y=1;
+            else y=-1;
+            if (y!=d_Expect[i]) atomicAdd(d_res,1);
+        }
+        else{
+            int k;
+            signed char y=d_Expect[i];
+            float max=d_Predict[(size_t)i*n+y];
+            for (k=0;k<n;k++){
+                if (d_Predict[(size_t)i*n+k]>max&&k!=y){
+                    atomicAdd(d_res,1);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+int benchmark(Model **M,DataSet *testSet,int n){
+    float *h_alpha,*d_alpha,*h_V,*d_V,*d_b,*h_b,*h_Vtest,*d_Vtest,*d_predict;
+    signed char *d_Y;
+    int *h_Num,*d_Num,*d_res,h_res;
+    int Num=0;
+    int v=testSet->Data[0]->Dim;
+    if (v!=M[0]->Data->Data[0]->Dim) return -1;
+    h_Num=(int *)malloc((size_t)(n+1)*sizeof(int));
+    h_Vtest=(float*)malloc((size_t)v*testSet->Num*sizeof(float));
+    int i,j;
+    h_Num[0]=0;
+    for (j=0;j<n;j++){
+        h_Num[j+1]=h_Num[j]+M[j]->Data->Num;
+        for (i=0;i<M[j]->Data->Num;i++)
+            memcpy(h_V+(size_t)((size_t)h_Num[j]+i)*v,M[j]->Data->Data[i]->X,(size_t)v*sizeof(float));
+    }
+    Num=h_Num[n];
+    h_V=(float*)malloc((size_t)v*Num*sizeof(float));
+    for (i=0;i<testSet->Num;i++)
+        memcpy(h_Vtest+(size_t)i*v,testSet->Data[i]->X,(size_t)v*sizeof(float));
+    cudaMalloc((void**)&d_V,(size_t)Num*v*sizeof(float));
+    cudaMalloc((void**)&d_Vtest,(size_t)testSet->Num*v*sizeof(float));
+    cudaMemcpy(d_V,h_V,(size_t)Num*v*sizeof(float),cudaMemcpyHostToDevice);
+    cudaMemcpy(d_Vtest,h_Vtest,(size_t)testSet->Num*v*sizeof(float),cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_predict,(size_t)n*testSet->Num*sizeof(float));
+    float *d_K;
+    cudaMalloc((void**)&d_K,(size_t)testSet->Num*Num*sizeof(float));
+    dim3 block2d(16,16);
+    dim3 grid2d((Num+15)/16,(testSet->Num+15)/16);
+    gaussKernel<<<grid2d,block2d>>>(d_V,d_Vtest,Num,testSet->Num,v,d_K);
+    cudaMalloc((void**)&d_alpha,(size_t)Num*sizeof(float));
+    cudaMalloc((void**)&d_b,(size_t)n*sizeof(float));
+    h_b=(float*)malloc((size_t)n*sizeof(float));
+    h_alpha=(float*)malloc((size_t)Num*sizeof(float));
+    for (i=0;i<n;i++){
+        for (j=h_Num[i];j<h_Num[i+1];j++){
+            h_alpha[j]=M[i]->Alpha[j-h_Num[i]]*M[i]->Data->Y[j-h_Num[i]];
+        }
+        h_b[i]=M[i]->B;
+    }
+    cudaMemcpy(d_b,h_b,(size_t)n*sizeof(float),cudaMemcpyHostToDevice);
+    cudaMemcpy(d_alpha,h_alpha,(size_t)Num*sizeof(float),cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_Num,(n+1)*sizeof(int));
+    cudaMemcpy(d_Num,h_Num,n*sizeof(int),cudaMemcpyHostToDevice);
+    int block1d=256;
+    int grid1d=(n*testSet->Num+255)/256;
+    predictKernel<<<grid1d,block1d>>>(d_K,d_alpha,d_Num,testSet->Num,n,d_b,d_predict);
+    cudaMalloc((void**)&d_Y,(size_t)testSet->Num*sizeof(signed char));
+    cudaMemcpy(d_Y,testSet->Y,(size_t)testSet->Num*sizeof(signed char),cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_res,(size_t)sizeof(int));
+    cudaMemset(d_res,0,(size_t)sizeof(int));
+    grid1d=(testSet->Num+255)/256;
+    resultKernel<<<grid1d,block1d>>>(d_predict,d_Y,testSet->Num,n,d_res);
+    cudaMemcpy(&h_res,d_res,sizeof(int),cudaMemcpyDeviceToHost);
+    cudaFree(d_alpha);
+    cudaFree(d_Y);
+    cudaFree(d_V);
+    cudaFree(d_Vtest);
+    cudaFree(d_res);
+    cudaFree(d_K);
+    cudaFree(d_Num);
+    cudaFree(d_b);
+    cudaFree(d_predict);
+    free(h_alpha);
+    free(h_Num);
+    free(h_V);
+    free(h_Vtest);
+    free(h_b);
+    return h_res;
+}
+
 void SVMFreeVec(Vec *V){
     SVMCleanUpVec(V);
     free(V);
@@ -595,7 +700,7 @@ void SVMFreeModel(Model *M,int n){
     free(M);
     return;
 }
-void SVMCleanUpModel(Model *M,int n){
+void SVMCleanUpModel(Model *M){
     if (M->Data){
         SVMFreeDataSet(M->Data);
         M->Data=NULL;

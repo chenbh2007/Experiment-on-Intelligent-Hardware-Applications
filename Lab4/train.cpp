@@ -47,7 +47,7 @@ int main(int argc,char **argv){
             {
                 svm::extractSV(&M,&SV);
                 std::cout<<"Number of SVs: "<<SV.Data->Num<<std::endl;
-                svm::SVMCleanUpModel(&M,M.Data->Num);
+                svm::SVMCleanUpModel(&M);
                 M.Data=(svm::DataSet*)malloc(sizeof(svm::DataSet));
                 svm::dataSetSlice(&db,&batch,i*batchsize,(i+1)*batchsize);
                 svm::mergeDataSet(SV.Data,&batch,M.Data);
@@ -61,11 +61,11 @@ int main(int argc,char **argv){
             std::cout<<"delta b"<<M.B-tmp_b<<std::endl;
             svm::SaveState(&M,argv[3],argv[4]);
             svm::SVMCleanUpDataSet(&batch);
-            if (SV.Data!=nullptr) svm::SVMCleanUpModel(&SV,SV.Data->Num);
+            if (SV.Data!=nullptr) svm::SVMCleanUpModel(&SV);
         }
         if (first) first=0;
     }
-    svm::SVMCleanUpModel(&M,M.Data->Num);
+    svm::SVMCleanUpModel(&M);
     svm::SVMCleanUpDataSet(&db);
     return 0;
 }
