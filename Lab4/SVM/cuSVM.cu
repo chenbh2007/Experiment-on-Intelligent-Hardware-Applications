@@ -695,8 +695,8 @@ void SVMFreeDataSet(DataSet *D){
     free(D);
     return;
 }
-void SVMFreeModel(Model *M,int n){
-    SVMCleanUpModel(M,n);
+void SVMFreeModel(Model *M){
+    SVMCleanUpModel(M);
     free(M);
     return;
 }
