@@ -33,6 +33,6 @@ int main(int argc,char **argv){
     }
     svm::SaveState(&m,argv[3],argv[4]);
     std::cout<<"Save Successfully."<<std::endl;
-    svm::SVMCleanUpModel(&m,m.Data->Num);
+    svm::SVMCleanUpModel(&m);
     return 0;
 }
