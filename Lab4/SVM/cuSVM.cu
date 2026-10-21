@@ -658,7 +658,7 @@ int benchmark(Model **M,DataSet *testSet,int n){
     cudaMemcpy(d_b,h_b,(size_t)n*sizeof(float),cudaMemcpyHostToDevice);
     cudaMemcpy(d_alpha,h_alpha,(size_t)Num*sizeof(float),cudaMemcpyHostToDevice);
     cudaMalloc((void**)&d_Num,(n+1)*sizeof(int));
-    cudaMemcpy(d_Num,h_Num,n*sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemcpy(d_Num,h_Num,(n+1)*sizeof(int),cudaMemcpyHostToDevice);
     int block1d=256;
     int grid1d=(n*testSet->Num+255)/256;
     predictKernel<<<grid1d,block1d>>>(d_K,d_alpha,d_Num,testSet->Num,n,d_b,d_predict);
