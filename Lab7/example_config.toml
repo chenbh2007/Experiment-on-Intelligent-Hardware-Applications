@@ -1,0 +1,29 @@
+
+[control]
+device = "cuda"
+batch_size = 64
+width = 80
+height = 60
+opt_every = 1
+save_every = 100       
+test_every = 20        
+state_file = "baseline.pth"         
+best_state_file = "best.pth"         
+
+[dataset]
+train_data_path = "dataset/train/"
+test_data_path  = "dataset/test/"
+train_file_index = "train_file_index.txt"
+test_file_index  = "test_file_index.txt"
+
+[nn]
+num_conv_layers = 2
+conv_kernel_size = 3   
+pool_kernel_size = 2   
+num_linear_layers = 1  
+linear_width = 128     
+
+[optim]
+lr = 0.001             
+weight_decay = 0.01   
+eps = 1e-8            
