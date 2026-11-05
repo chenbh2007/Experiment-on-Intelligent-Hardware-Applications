@@ -222,22 +222,26 @@ int main(int argc,char **argv){
         );
     net->to(device);
     net->train();
+    int step=0;
     while(is_running){
         int batch_index=0;
         for (auto& batch:*train_data_loader){
             if (!is_running) break;
             auto data=batch.data.to(device);
             auto targets=batch.target.to(device);
-            if (batch_index%opt_every==0)optimizer.zero_grad();
+            if (step%opt_every==0)optimizer.zero_grad();
             auto output=net->forward(data);
             auto loss=torch::nn::functional::cross_entropy(output,targets);
             loss.backward();
-            if ((batch_index+1)%opt_every==0)optimizer.step();
+            if ((step+1)%opt_every==0)optimizer.step();
             batch_index++;
-            if (batch_index%save_every==0){
+	    step++;
+	    //std::cout<<"Batch "<<batch_index<<" Completed."<<std::endl;
+            if (step%save_every==0){
                 torch::save(net,state_file);
+		std::cout<<"Saved.\n";
             }
-            if (batch_index%test_every==0){
+            if (step%test_every==0){
                 std::cout<<"Testing..."<<std::endl;
                 std::pair<double,double> res=test_model(net,test_data_loader,device);
                 std::cout<<"Test result:\n"<<"Avg loss: "<<res.first<<"\n"<<"Acc: "<<res.second*100<<"%\n";
