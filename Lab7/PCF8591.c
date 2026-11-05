@@ -23,8 +23,9 @@ uint8_t AD_input(int fd,uint8_t chip_addr,uint8_t channel,uint8_t input_method){
     }
     return res;
 }
-int DA_output(int fd,uint8_t chip_addr,uint8_t *raw,int len){
-    struct i2c_msg msgs={.addr=chip_addr,.flags=0,.len=len,.buf=raw};
+int DA_output(int fd,uint8_t chip_addr,uint8_t raw){
+    uint8_t buffer[2]={0x40,raw};
+    struct i2c_msg msgs={.addr=chip_addr,.flags=0,.len=2,.buf=buffer};
     struct i2c_rdwr_ioctl_data package={.msgs=&msgs,.nmsgs=1};
     return ioctl(fd,I2C_RDWR,&package);
 }
