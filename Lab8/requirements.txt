@@ -1,0 +1,8 @@
+numpy
+soundfile
+librosa>=0.11
+scikit-learn
+hmmlearn>=0.3.3
+joblib
+
+# record 和麦克风识别还需要 PyAudio。Linux 上通过 pip 安装前需准备 PortAudio 开发包。
