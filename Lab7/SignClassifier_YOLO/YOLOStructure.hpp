@@ -76,10 +76,8 @@ namespace yolo{
             c4=register_module("c2f4",std::make_shared<C2f>(base*8,middle_channel_C2f*8,base*8,hidden_channel_bottleneck*8,num_bottleneck,p_bottleneck,shortcut_bottleneck));
             c5=register_module("c2f5",std::make_shared<C2f>(base*16,middle_channel_C2f*16,base*16,hidden_channel_bottleneck*16,num_bottleneck,p_bottleneck,shortcut_bottleneck));
             SPPF=register_module("SPPF",torch::nn::ModuleList());
-            for (int i=0;i<3;i++){
-                SPPF->push_back(torch::nn::MaxPool2d(torch::nn::MaxPool2dOptions(5).stride(1).padding(2)));
-                SPPF->push_back(std::make_shared<Conv>(base*32,base*16,1,1,0));
-            }
+            SPPF->push_back(torch::nn::MaxPool2d(torch::nn::MaxPool2dOptions(5).stride(1).padding(2)));
+            SPPF->push_back(std::make_shared<Conv>(base*64,base*16,1,1,0));
         }
         std::vector<torch::Tensor> forward(torch::Tensor input){
             torch::Tensor x=c2->forward(cv2->forward(cv1->forward(input)));
@@ -91,10 +89,10 @@ namespace yolo{
             x=c5->forward(cv5->forward(x));
             torch::Tensor y=x;
             for (int i=0;i<3;i++){
-                x=SPPF[i*2]->as<torch::nn::MaxPool2d>()->forward(x);
+                x=SPPF[0]->as<torch::nn::MaxPool2d>()->forward(x);
                 y=torch::cat({x,y},1);
-                y=SPPF[i*2+1]->as<Conv>()->forward(y);
             }
+            y=SPPF[1]->as<Conv>()->forward(y);
             output.push_back(y);
             return output;
         }

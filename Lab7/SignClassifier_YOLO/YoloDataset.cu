@@ -23,9 +23,7 @@
             cudaGetErrorString(yolo_cuda_error_));                              \
     } while (false)
 
-#define MAX(a,b) (((a)>(b))?(a):(b))
-#define MIN(a,b) (((a)>(b))?(b):(a))
-
+namespace yolo{
 std::map<std::string,int64_t> gesture_classes={{"call",0},
                                                 {"dislike",1},
                                                 {"fist",2},
@@ -186,21 +184,21 @@ torch::data::Example<torch::Tensor,std::vector<torch::Tensor> > YoloDataset::get
     }
     std::vector<torch::Tensor> target;        
     int64_t num_class=gesture_classes.size();
-    torch::Tensor locatepic=torch::zeros({5,h,w},torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU)),
-        predictpic=torch::zeros({num_class,h,w},torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
-    auto locate=locatepic.accessor<float,3>();
-    auto predict=predictpic.accessor<float,3>();
     for (int s=8;s<=32;s*=2){
+        torch::Tensor locatepic=torch::zeros({5,h/s,w/s},torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU)),
+            predictpic=torch::zeros({num_class,h/s,w/s},torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
+        auto locate=locatepic.accessor<float,3>();
+        auto predict=predictpic.accessor<float,3>();
         for (int j=0;j<bboxes[index].size();j++){
-            int x1=(int)((double)w0*bboxes[index][j][0]/coeff);
-            int y1=(int)((double)h0*bboxes[index][j][1]/coeff);
-            int x2=(int)((double)w0*(bboxes[index][j][2]+bboxes[index][j][0])/coeff);
-            int y2=(int)((double)h0*(bboxes[index][j][3]+bboxes[index][j][1])/coeff);
-            int xc=(x1+x2)/2;
-            int yc=(y1+y2)/2;
-            for (int y=yc-s*1.5;y<yc+s*1.5;y++){
-                for (int x=xc-s*1.5;x<xc+s*1.5;x++){
-                    if (x>=0&&x<w&&y>=0&&y<h&&x>=x1&&x<x2&&y>=y1&&y<y2){
+            double x1=((double)w0*bboxes[index][j][0]/(coeff*s));
+            double y1=((double)h0*bboxes[index][j][1]/(coeff*s));
+            double x2=((double)w0*(bboxes[index][j][2]+bboxes[index][j][0])/(coeff*s));
+            double y2=((double)h0*(bboxes[index][j][3]+bboxes[index][j][1])/(coeff*s));
+            double xc=(x1+x2)/2;
+            double yc=(y1+y2)/2;
+            for (int y=(int)(yc-1.5);y<yc+1.5;y++){
+                for (int x=(int)(xc-1.5);x<xc+1.5;x++){
+                    if (x>=0&&x<w/s&&y>=0&&y<h/s&&x>x1&&x<x2&&y>y1&&y<y2){
                         float ctr=std::sqrt((float)MIN(x-x1,x2-x)/(float)MAX(x-x1,x2-x)*(float)MIN(y-y1,y2-y)/(float)MAX(y-y1,y2-y));
                         if (ctr<locate[0][y][x]){
                             continue;
@@ -217,12 +215,13 @@ torch::data::Example<torch::Tensor,std::vector<torch::Tensor> > YoloDataset::get
                 }
             }
         }  
-        target.push_back(locatepic.clone());
-        target.push_back(predictpic.clone());
+        target.push_back(locatepic);
+        target.push_back(predictpic);
     }
     return {input,target};
 }
 
 torch::optional<size_t> YoloDataset::size()const{
     return pic_paths.size();
+}
 }

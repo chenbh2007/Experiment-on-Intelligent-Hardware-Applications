@@ -7,7 +7,7 @@
 #include <map>
 #include <string>
 #include <vector>
-
+namespace yolo{
 using Sample=torch::data::Example<torch::Tensor,std::vector<torch::Tensor> >;
 
 extern std::map<std::string,int64_t> gesture_classes;
@@ -32,3 +32,4 @@ class YoloDataset:public torch::data::datasets::Dataset<YoloDataset,Sample>{
     torch::data::Example<torch::Tensor,std::vector<torch::Tensor> > get(size_t index) override;
     torch::optional<size_t> size()const override;
 };
+}
