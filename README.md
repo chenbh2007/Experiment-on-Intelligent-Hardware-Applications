@@ -10,14 +10,13 @@
 | [Lab2](Lab2/) | BMP280 温度采集、二维样本生成、K-means 与核 K-means、PPM 绘图 | C 编译器；传感器实验需 Linux I²C 和 BMP280，GPU 版本需 CUDA 和 cuBLAS |
 | [Lab3](Lab3/) | 颜色转换、透视变换、轮廓提取、霍夫圆检测与图像自动矫正 | C++17、CMake、OpenCV 5；自动矫正子项目还需 CUDA |
 | [Lab4](Lab4/) | MNIST 手写数字识别，包括数据转换、SVM 训练与评测 | C++17；默认 CMake 构建需 CMake 3.22+、OpenCV 4 和 CUDA；目录也提供 CPU 版训练与评测源码 |
-| Lab5 | Prolog 动物识别专家系统与舵机联动 | 本仓库暂无源码，实验报告位于外层工作区的 `report/Lab5/` |
 | [Lab6](Lab6/) | Haar 级联人脸与人眼检测、人脸隐私保护、CAMShift 目标跟踪 | C++17、CMake、带图形界面支持的 OpenCV；实时检测需摄像头和级联模型 XML |
 | [Lab7](Lab7/) | PCF8591 驱动、CNN 手势分类、实时手势控制 LED，以及自定义 YOLO 检测实验 | CMake、LibTorch、OpenCV；LED 控制需摄像头与 I²C 设备，YOLO 实验使用 CUDA 和 cJSON |
 | [Lab8](Lab8/) | 基于 MFCC 与 GMM-HMM 的 0–9 孤立数字语音识别，支持录音、训练、评估和预测 | Python，依赖见 [requirements.txt](Lab8/requirements.txt)；麦克风模式另需 PyAudio 和 PortAudio |
 
 ## 快速运行
 
-以下各组命令均从仓库根目录开始执行。如果从外层实验工作区进入，先执行 `cd src`。
+以下各组命令均从仓库根目录开始执行。
 
 ### Lab2 · CPU K-means
 
