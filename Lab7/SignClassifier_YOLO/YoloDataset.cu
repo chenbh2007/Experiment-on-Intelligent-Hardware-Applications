@@ -140,7 +140,7 @@ YoloDataset::YoloDataset(std::string annotations_dir,std::string data_dir,size_t
             if (!tot_json) continue;
             std::string class_name=annotations.path().filename().stem().string();
             if (!std::filesystem::exists(std::filesystem::path(data_dir)/class_name)){
-                std::cout<<class_name<<" data not found. Skipped.\n"<<std::endl;
+                std::cout<<class_name<<" data not found. Skipped."<<std::endl;
                 cJSON_Delete(tot_json);
                 continue;
             }
