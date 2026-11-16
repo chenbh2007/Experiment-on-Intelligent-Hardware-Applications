@@ -73,7 +73,7 @@ std::vector<torch::Tensor> getboxes(const std::vector<torch::Tensor> &output,flo
     int s=s0;
     int batchsize=output[0].size(0);
     torch::Tensor batchidx=torch::arange(batchsize,output[0].options()).view({batchsize,1,1});
-    for (int i=0;i<p;i++){
+    for (int i=0;i<p&&is_running;i++){
         torch::Tensor loc=output[i*2].permute({0,2,3,1});
         torch::Tensor cls_score=output[i*2+1].permute({0,2,3,1});
         torch::Tensor ctr_score=loc.slice(-1,0,1);
@@ -91,13 +91,13 @@ std::vector<torch::Tensor> getboxes(const std::vector<torch::Tensor> &output,flo
                 (-cltrb[3]+ys)*s+batchidx*10000.0f,
                 (cltrb[4]+ys)*s+batchidx*10000.0f,
                 conf},-1);
-        for (int j=0;j<num_class;j++){
+        for (int j=0;j<num_class&&is_running;j++){
             torch::Tensor cls_index=score.argmax(-1).eq(j)&positive;
             boxes[j].push_back(xxyyconf.index({cls_index}));
         }
         s=s*2;
     }
-    for (int i=0;i<num_class;i++){
+    for (int i=0;i<num_class&&is_running;i++){
         result.push_back(torch::cat(boxes[i],0));
     }
     return result;
@@ -106,10 +106,10 @@ std::vector<torch::Tensor> getboxes(const std::vector<torch::Tensor> &output,flo
 std::vector<torch::Tensor> nms(const std::vector<torch::Tensor> &boxes,float threshold){
     int num_class=yolo::gesture_classes.size();
     std::vector<torch::Tensor> result;
-    for (int i=0;i<num_class;i++){
+    for (int i=0;i<num_class&&is_running;i++){
         torch::Tensor cls_boxes=boxes[i];
         std::vector<torch::Tensor> kept;
-        while(cls_boxes.size(0)>0){
+        while(cls_boxes.size(0)>0&&is_running){
             torch::Tensor max_index=cls_boxes.select(-1,4).argmax(0);
             torch::Tensor max_box=cls_boxes.index({max_index});
             kept.push_back(max_box);
@@ -344,7 +344,7 @@ int main(int argc,char **argv){
             }
             if (step%test_every_step==0){
                 auto score=eval_model(eval_dataloader,Net,box_threshold,device);
-                for (int l=0;l<5;l++){
+                for (int l=0;l<5&&is_running;l++){
                     for (int cls=0;cls<num_class;cls++){
                         eval_log<<epoch<<"\t"
                         <<step<<"\t"<<std::fixed<<std::setprecision(6)
@@ -356,6 +356,8 @@ int main(int argc,char **argv){
                         <<score[l][cls][2]<<"\n"<<std::flush;
                     }
                 }
+                
+                if (!is_running) break;
 
                 float cur_best_fitness = -1.0f;
                 int best_l = 0;
