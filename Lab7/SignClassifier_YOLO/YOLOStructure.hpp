@@ -154,7 +154,7 @@ namespace yolo{
         std::shared_ptr<Conv> middle;
         torch::nn::Conv2d out{nullptr};
         SingleHead(int in_channel,int out_channel){
-            in=register_module("in",std::make_shared<Conv>(in_channel,in_channel/2,3,1,1));
+            in=register_module("in_conv",std::make_shared<Conv>(in_channel,in_channel/2,3,1,1));
             middle=register_module("mid",std::make_shared<Conv>(in_channel/2,in_channel/2,3,1,1));
             out=register_module("out",torch::nn::Conv2d(torch::nn::Conv2dOptions(in_channel/2,out_channel,1).stride(1).padding(0)));
         }
