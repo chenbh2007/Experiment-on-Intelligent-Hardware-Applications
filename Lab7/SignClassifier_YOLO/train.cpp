@@ -6,6 +6,8 @@
 #include <iostream>
 #include <filesystem>
 #include <iomanip>
+#include <algorithm>
+#include <numeric>
 
 static volatile sig_atomic_t is_running=1;
 void handler(int sig){
@@ -91,8 +93,9 @@ std::vector<torch::Tensor> getboxes(const std::vector<torch::Tensor> &output,flo
                 (-cltrb[3]+ys)*s+batchidx*10000.0f,
                 (cltrb[4]+ys)*s+batchidx*10000.0f,
                 conf},-1);
+        torch::Tensor index=score.argmax(-1);
         for (int j=0;j<num_class&&is_running;j++){
-            torch::Tensor cls_index=score.argmax(-1).eq(j)&positive;
+            torch::Tensor cls_index=index.eq(j)&positive;
             boxes[j].push_back(xxyyconf.index({cls_index}));
         }
         s=s*2;
@@ -103,34 +106,66 @@ std::vector<torch::Tensor> getboxes(const std::vector<torch::Tensor> &output,flo
     return result;
 }
 
-std::vector<torch::Tensor> nms(const std::vector<torch::Tensor> &boxes,float threshold){
+std::vector<torch::Tensor> nms(const std::vector<torch::Tensor> &boxes,float threshold,int max_det=-1){
     int num_class=yolo::gesture_classes.size();
     std::vector<torch::Tensor> result;
     for (int i=0;i<num_class&&is_running;i++){
+        if (boxes[i].size(0)==0){
+            result.push_back(torch::empty({0,5},boxes[i].options().device(torch::kCPU)));
+            continue;
+        }
         torch::Tensor cls_boxes=boxes[i];
-        std::vector<torch::Tensor> kept;
-        while(cls_boxes.size(0)>0&&is_running){
-            torch::Tensor max_index=cls_boxes.select(-1,4).argmax(0);
-            torch::Tensor max_box=cls_boxes.index({max_index});
-            kept.push_back(max_box);
-            torch::Tensor max_p1=max_box.slice(-1,0,4,2);
-            torch::Tensor max_p3=max_box.slice(-1,1,4,2);
-            torch::Tensor p1=cls_boxes.slice(-1,0,4,2);
-            torch::Tensor p3=cls_boxes.slice(-1,1,4,2);
-            torch::Tensor I_area=(torch::minimum(max_p3,p3)-torch::maximum(max_p1,p1)).clamp_min(0).prod(-1);
-            torch::Tensor U_area=(p3-p1).prod(-1)+(max_p3-max_p1).prod(-1)-I_area;
-            torch::Tensor IoU=I_area/U_area.clamp_min(1e-7f);
-            torch::Tensor IoU_index=IoU.lt(threshold);
-            IoU_index.index_put_({max_index},false);
-            cls_boxes=cls_boxes.index({IoU_index});
+        torch::Tensor cpu_boxes=cls_boxes.cpu().contiguous();
+        int64_t n=cpu_boxes.size(0);
+        auto acc=cpu_boxes.accessor<float,2>();
+        std::vector<int64_t> order(n);
+        std::iota(order.begin(), order.end(), 0);
+        int64_t limit = (max_det >= 0) ? std::min<int64_t>(n, 2000) : n;
+        if (limit < n) {
+            std::partial_sort(order.begin(), order.begin() + limit, order.end(), [&](int64_t a, int64_t b) {
+                return acc[a][4] > acc[b][4];
+            });
+            order.resize(limit);
+        } else {
+            std::sort(order.begin(), order.end(), [&](int64_t a, int64_t b) {
+                return acc[a][4] > acc[b][4];
+            });
         }
-        if (kept.empty()){
-            result.push_back(torch::empty({0,5},cls_boxes.options()));
+        std::vector<int64_t> kept_idx;
+        std::vector<bool> suppressed(n, false);
+        for (int64_t p = 0; p < limit; ++p) {
+            int64_t idx = order[p];
+            if (suppressed[idx]) continue;
+
+            kept_idx.push_back(idx);
+            if (max_det >= 0 && static_cast<int>(kept_idx.size()) >= max_det) break;
+
+            float x1_a = acc[idx][0], x2_a = acc[idx][1];
+            float y1_a = acc[idx][2], y2_a = acc[idx][3];
+            float area_a = std::max(0.0f, x2_a - x1_a) * std::max(0.0f, y2_a - y1_a);
+
+            for (int64_t q = p + 1; q < limit; ++q) {
+                int64_t j = order[q];
+                if (suppressed[j]) continue;
+
+                float x1_b = acc[j][0], x2_b = acc[j][1];
+                float y1_b = acc[j][2], y2_b = acc[j][3];
+                float iw = std::max(0.0f, std::min(x2_a, x2_b) - std::max(x1_a, x1_b));
+                float ih = std::max(0.0f, std::min(y2_a, y2_b) - std::max(y1_a, y1_b));
+                float inter = iw * ih;
+                if (inter <= 0.0f) continue;
+
+                float area_b = std::max(0.0f, x2_b - x1_b) * std::max(0.0f, y2_b - y1_b);
+                float iou = inter / std::max(area_a + area_b - inter, 1e-7f);
+                if (iou >= threshold) {
+                    suppressed[j] = true;
+                }
+            }
         }
-        else{
-            result.push_back(torch::stack(kept,0));
-           
-        }
+        torch::Tensor idx_tensor = torch::from_blob(
+            kept_idx.data(), {static_cast<int64_t>(kept_idx.size())}, torch::kLong
+        ).clone();
+        result.push_back(cpu_boxes.index({idx_tensor}));
     }
     return result;
 }
@@ -146,6 +181,7 @@ std::vector<std::vector<std::vector<float> > > eval_model(DataLoaderType &dataLo
     std::vector<std::vector<int64_t> > cls_FP(5,std::vector<int64_t>(num_class)),cls_TP(5,std::vector<int64_t>(num_class)),cls_tot(5,std::vector<int64_t>(num_class));
     for (auto &batch:*dataLoader){
         torch::Tensor data=batch.data.to(device);
+        int batch_size=data.size(0);
         std::vector<torch::Tensor> target;
         for (const torch::Tensor &target_it:batch.target)
             target.push_back(target_it.to(device));
@@ -155,9 +191,23 @@ std::vector<std::vector<std::vector<float> > > eval_model(DataLoaderType &dataLo
             output[i*2+1]=output[i*2+1].sigmoid();
         }
         std::vector<torch::Tensor> boxes_target=nms(getboxes(target,0.5f,3,8,true),0.99);
+        std::vector<torch::Tensor> base_boxes=getboxes(output,0.4f,3,8);
+        for (torch::Tensor &b:base_boxes){
+            b=b.cpu();
+        }
         for (int l=0;l<5;l++){
             threshold=0.4f+l*0.1f;
-            std::vector<torch::Tensor> boxes_output=nms(getboxes(output,threshold,3,8),box_threshold);
+            std::vector<torch::Tensor> filtered(num_class);
+            for (int c = 0; c < num_class; c++) {
+            if (l == 0 || base_boxes[c].size(0) == 0) {
+                filtered[c] = base_boxes[c];
+            } 
+            else {
+                filtered[c] = base_boxes[c].index({base_boxes[c].select(-1, 4).gt(threshold)});
+                }
+            }
+            std::vector<torch::Tensor>  boxes_output=nms(filtered,box_threshold,batch_size*10);
+            if (!is_running) break;
             for (int i=0;i<boxes_target.size();i++){
                 int64_t TP=0,FP=0,tot=boxes_target[i].size(0),pred_tot=boxes_output[i].size(0);
                 float IoU_sum=0.0f;
@@ -174,7 +224,7 @@ std::vector<std::vector<std::vector<float> > > eval_model(DataLoaderType &dataLo
                 torch::Tensor p3_tar=tar_boxes.slice(-1,1,4,2);
                 torch::Tensor I_area=(torch::minimum(p3_tar,p3_cls)-torch::maximum(p1_tar,p1_cls)).clamp_min(0).prod(-1);
                 torch::Tensor U_area=(p3_cls-p1_cls).prod(-1)+(p3_tar-p1_tar).prod(-1)-I_area;
-                torch::Tensor IoU=(I_area/U_area.clamp_min(1e-7)).cpu().contiguous();
+                torch::Tensor IoU=I_area/U_area.clamp_min(1e-7);
                 for (int j=0;j<tot&&pred_tot>0;j++){
                     torch::Tensor max_index=IoU.select(0,j).argmax(-1);
                     if (IoU.index({j,max_index}).item<float>()<0) break;
