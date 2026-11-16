@@ -59,6 +59,40 @@ std::map<std::string,int64_t> gesture_classes={{"call",0},
                                                 {"xsign",32},
                                                 {"no_gesture",33}
 };
+std::vector<std::string> gesture_classes_dict={"call",
+                                                "dislike",
+                                                "fist",
+                                                "four",
+                                                "like",
+                                                "mute",
+                                                "ok",
+                                                "one",
+                                                "palm",
+                                                "three3",
+                                                "thumb_index2",
+                                                "peace",
+                                                "peace_inverted",
+                                                "rock",
+                                                "stop",
+                                                "stop_inverted",
+                                                "three",
+                                                "three2",
+                                                "two_up",
+                                                "two_up_inverted",
+                                                "three_gun",
+                                                "timeout",
+                                                "grabbing",
+                                                "grip",
+                                                "hand_heart",
+                                                "hand_heart2",
+                                                "holy",
+                                                "little_finger",
+                                                "middle_finger",
+                                                "point",
+                                                "take_picture",
+                                                "thumb_index",
+                                                "xsign",
+                                                "no_gesture"};
 
 __global__ void resize(float *d_pic,float *d_target,int w,int h,int target_w,int target_h,double scale){
     size_t j=blockIdx.x*blockDim.x+threadIdx.x;
@@ -83,7 +117,20 @@ __global__ void resize(float *d_pic,float *d_target,int w,int h,int target_w,int
     }
 }
 
-YoloDataset::YoloDataset(std::string annotations_dir,std::string data_dir,size_t size0,int w,int h):width(w),height(h),maxsize(size0){
+Gpuwindow::Gpuwindow(size_t max,size_t target_size){
+    CHECK_CUDA(cudaMalloc((void**)&d_input,max*sizeof(float)));
+    CHECK_CUDA(cudaMalloc((void**)&d_output,target_size*sizeof(float)));
+    h_output=(float*)std::malloc(target_size*sizeof(float));
+    maxsize=max;
+}
+
+Gpuwindow::~Gpuwindow() noexcept{
+    if (d_input) cudaFree(d_input);
+    if (d_output) cudaFree(d_output);
+    std::free(h_output);
+}
+
+YoloDataset::YoloDataset(std::string annotations_dir,std::string data_dir,size_t size0,int w,int h):width(w),height(h){
     for (const auto &annotations:std::filesystem::directory_iterator(annotations_dir)){
         if (annotations.path().extension()==".json"){
             std::ifstream log(annotations.path().string());
@@ -92,6 +139,11 @@ YoloDataset::YoloDataset(std::string annotations_dir,std::string data_dir,size_t
             cJSON* tot_json=cJSON_Parse(content.c_str());
             if (!tot_json) continue;
             std::string class_name=annotations.path().filename().stem().string();
+            if (!std::filesystem::exists(std::filesystem::path(data_dir)/class_name)){
+                std::cout<<class_name<<" data not found. Skipped.\n"<<std::endl;
+                cJSON_Delete(tot_json);
+                continue;
+            }
             for (const auto &pictures:std::filesystem::directory_iterator(std::filesystem::path(data_dir)/class_name)){
                 if (pictures.path().extension()==".jpg"){
                     std::string pic_name=pictures.path().filename().stem().string();
@@ -143,11 +195,10 @@ YoloDataset::YoloDataset(std::string annotations_dir,std::string data_dir,size_t
                 }
             }
             cJSON_Delete(tot_json);
+            std::cout<<class_name<<" loaded."<<std::endl;
         }
     }
-    d_buf.h_output=(float*)malloc(w*h*sizeof(float));
-    CHECK_CUDA(cudaMalloc((void**)&d_buf.d_input,size0*sizeof(float)));
-    CHECK_CUDA(cudaMalloc((void**)&d_buf.d_output,w*h*sizeof(float)));
+    d_buf=std::make_shared<Gpuwindow>(size0,w*h);
 }
 
 torch::data::Example<torch::Tensor,std::vector<torch::Tensor> > YoloDataset::get(size_t index){
@@ -166,21 +217,21 @@ torch::data::Example<torch::Tensor,std::vector<torch::Tensor> > YoloDataset::get
     torch::Tensor input=torch::empty({0,h,w},torch::kFloat32);
     dim3 block(32,32);
     dim3 grid((w+31)/32,(h+31)/32);
-    if (required_pixels>maxsize){
-        std::cout<<"Raw size exceed limit. Expanding buffer."<<std::endl;
-        CHECK_CUDA(cudaFree(d_buf.d_input));
-        d_buf.d_input=nullptr;
-        maxsize=0;
-        CHECK_CUDA(cudaMalloc((void**)&d_buf.d_input,required_pixels*sizeof(float)));
-        maxsize=required_pixels;
+    if (required_pixels>d_buf->maxsize){
+        std::cout<<"Raw size exceed limit. Expanding buffer to "<<required_pixels<<"."<<std::endl;
+        CHECK_CUDA(cudaFree(d_buf->d_input));
+        d_buf->d_input=nullptr;
+        d_buf->maxsize=0;
+        CHECK_CUDA(cudaMalloc((void**)&d_buf->d_input,required_pixels*sizeof(float)));
+        d_buf->maxsize=required_pixels;
     }
     for (int i=0;i<3;i++){
-        CHECK_CUDA(cudaMemcpy(d_buf.d_input,raw_channels[i].ptr<float>(),required_pixels*sizeof(float),cudaMemcpyHostToDevice));
-        resize<<<grid,block>>>(d_buf.d_input,d_buf.d_output,w0,h0,w,h,coeff);
+        CHECK_CUDA(cudaMemcpy(d_buf->d_input,raw_channels[i].ptr<float>(),required_pixels*sizeof(float),cudaMemcpyHostToDevice));
+        resize<<<grid,block>>>(d_buf->d_input,d_buf->d_output,w0,h0,w,h,coeff);
         // Check launch errors here; the blocking copy also reports execution errors.
         CHECK_CUDA(cudaGetLastError());
-        CHECK_CUDA(cudaMemcpy(d_buf.h_output,d_buf.d_output,w*h*sizeof(float),cudaMemcpyDeviceToHost));
-        input=torch::cat({input,torch::from_blob(d_buf.h_output,{1,h,w},torch::kFloat32).clone()},0);
+        CHECK_CUDA(cudaMemcpy(d_buf->h_output,d_buf->d_output,w*h*sizeof(float),cudaMemcpyDeviceToHost));
+        input=torch::cat({input,torch::from_blob(d_buf->h_output,{1,h,w},torch::kFloat32).clone()},0);
     }
     std::vector<torch::Tensor> target;        
     int64_t num_class=gesture_classes.size();

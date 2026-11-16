@@ -1,0 +1,58 @@
+# SignClassifier_YOLO 配置示例（用于 mute.json 简单测试或迁移到 Colab 训练）
+# 目录结构要求（参考 YoloDataset.cu）：
+#   annotations_dir/
+#     └── mute.json          # 标注文件名 stem 为类别名
+#   picture_dir/
+#     └── mute/              # 必须存在与 json 同名的子目录，内部放对应的 .jpg 图片
+#         ├── 441091d7-e003-46f3-a61f-25f73234abe0.jpg
+#         └── ...
+
+[YOLO]
+# 注意：当前 train.cpp 第 232 行将 P_channel 硬编码为 base * 32。
+# 若保持该写法，建议将 base 设为 16~24、缩放比设为 0.5，避免 Neck/Head 通道过大爆显存。
+base = 16
+num_bottleneck = 1
+enable_shortcut = true
+r_C2f = 0.5
+r_bottleneck = 0.5
+
+[model]
+state_file = "./runs/mute_test/state.pt"
+best_state_file = "./runs/mute_test/best.pt"
+
+[data]
+# 简单测试时，可把 mute.json 放到 ./test_data/annotations/mute.json，
+# 把对应的少量 .jpg 放到 ./test_data/images/mute/ 下（测试时 train 与 eval 可暂指同一目录）
+train_annotations_dir = "./test_data/annotations"
+train_picture_dir = "./test_data/images"
+eval_annotations_dir = "./test_data/annotations"
+eval_picture_dir = "./test_data/images"
+# 预分配的 GPU 图像缓冲区像素数（如 1920*1080=2073600；若原图更大程序会自动扩容）
+max_size = 2073600
+
+[control]
+# 简单测试可用较小 batch；在 Colab T4/A100 上正式训练可按显存调到 16~64
+batch_size = 4
+opt_every_step = 1
+save_every_step = 20
+test_every_step = 20
+
+[loss]
+l_cls = 0.5
+l_box = 1.0
+l_ctr = 0.8
+alpha = 0.25
+gamma = 2.0
+# NMS 的 IoU 抑制阈值
+box_threshold = 0.25
+
+[optim]
+lr = 1e-4
+weight_decay = 0.01
+eps = 1e-8
+checkpoint = "./runs/mute_test/optim_checkpoint.pt"
+
+[log]
+log_every_step = 1
+# 训练日志文件 train_log.tsv、eval_log.tsv、epoch_step、best_record 均保存在此目录
+log_dir = "./runs/mute_test/logs"
