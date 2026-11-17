@@ -2,7 +2,6 @@
 
 #include <opencv2/opencv.hpp>
 #include <cjson/cJSON.h>
-#include <cuda_runtime.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -11,17 +10,6 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
-
-#define CHECK_CUDA(call)                                                       \
-    do {                                                                       \
-        const cudaError_t yolo_cuda_error_ = (call);                            \
-        TORCH_CHECK(                                                           \
-            yolo_cuda_error_ == cudaSuccess,                                   \
-            "CUDA call failed: ", #call, " -> ",                               \
-            cudaGetErrorName(yolo_cuda_error_),                                \
-            " (", static_cast<int>(yolo_cuda_error_), "): ",                    \
-            cudaGetErrorString(yolo_cuda_error_));                              \
-    } while (false)
 
 namespace yolo{
 std::map<std::string,int64_t> gesture_classes={{"call",0},
@@ -94,43 +82,24 @@ std::vector<std::string> gesture_classes_dict={"call",
                                                 "xsign",
                                                 "no_gesture"};
 
-__global__ void resize(float *d_pic,float *d_target,int w,int h,int target_w,int target_h,double scale){
-    size_t j=blockIdx.x*blockDim.x+threadIdx.x;
-    size_t i=blockIdx.y*blockDim.y+threadIdx.y;
-    if (i<target_h&&j<target_w){
-        size_t source_i_lower=(((i-1)*scale)>=h) ? (h-1):((i-1)*scale);
-        source_i_lower=(i>0)? source_i_lower:0;
-        size_t source_j_lower=(((j-1)*scale)>=w) ? (w-1):((j-1)*scale);
-        source_j_lower=(j>0)? source_j_lower:0;
-        size_t source_i_upper=(((i+1)*scale)>h) ? h:((i+1)*scale);
-        size_t source_j_upper=(((j+1)*scale)>w) ? w:((j+1)*scale);
-        d_target[i*target_w+j]=0;
-        int cnt=0;
-        for (size_t si=source_i_lower;si<source_i_upper;si++){
-            for (size_t sj=source_j_lower;sj<source_j_upper;sj++){
-                cnt++;
-                d_target[i*target_w+j]+=d_pic[si*w+sj];
-            }
-        }
-        if (cnt!=0)
-            d_target[i*target_w+j]/=(double)cnt;
-    }
+double resize(cv::Mat &src,cv::Mat &res,int target_w,int target_h){
+    cv::Mat resized;
+    int w0=src.cols;
+    int h0=src.rows;
+    double scale = std::min(static_cast<double>(target_w) / w0,
+                     static_cast<double>(target_h) / h0);
+    int new_w=std::min(target_w,static_cast<int>(std::round(scale*w0)));
+    int new_h=std::min(target_h,static_cast<int>(std::round(scale*h0)));
+    int interp=(scale<1.0)? cv::INTER_AREA : cv::INTER_LINEAR;
+    cv::resize(src,resized,cv::Size(new_w,new_h),0,0,interp);
+    int bottom=target_h-new_h;
+    int right=target_w-new_w;
+    cv::copyMakeBorder(resized,res,0,bottom,0,right,cv::BORDER_REPLICATE);
+    return scale;
 }
 
-Gpuwindow::Gpuwindow(size_t max,size_t target_size){
-    CHECK_CUDA(cudaMalloc((void**)&d_input,max*sizeof(float)));
-    CHECK_CUDA(cudaMalloc((void**)&d_output,target_size*sizeof(float)));
-    h_output=(float*)std::malloc(target_size*sizeof(float));
-    maxsize=max;
-}
 
-Gpuwindow::~Gpuwindow() noexcept{
-    if (d_input) cudaFree(d_input);
-    if (d_output) cudaFree(d_output);
-    std::free(h_output);
-}
-
-YoloDataset::YoloDataset(std::string annotations_dir,std::string data_dir,size_t size0,int w,int h):width(w),height(h){
+YoloDataset::YoloDataset(std::string annotations_dir,std::string data_dir,int w,int h):width(w),height(h){
     for (const auto &annotations:std::filesystem::directory_iterator(annotations_dir)){
         if (annotations.path().extension()==".json"){
             std::ifstream log(annotations.path().string());
@@ -198,41 +167,28 @@ YoloDataset::YoloDataset(std::string annotations_dir,std::string data_dir,size_t
             std::cout<<class_name<<" loaded."<<std::endl;
         }
     }
-    d_buf=std::make_shared<Gpuwindow>(size0,w*h);
 }
 
 torch::data::Example<torch::Tensor,std::vector<torch::Tensor> > YoloDataset::get(size_t index){
     const int64_t w=width,h=height;
     cv::Mat raw=cv::imread(pic_paths[index],cv::IMREAD_COLOR);
-    cv::cvtColor(raw,raw,cv::COLOR_BGR2HSV);
+    TORCH_CHECK(!raw.empty(), "Failed to read image: ", pic_paths[index]);
+    cv::Mat resized;
+    int w0=raw.cols;
+    int h0=raw.rows;
+    double scale=resize(raw,resized,w,h);
+    cv::cvtColor(resized,resized,cv::COLOR_BGR2HSV);
     std::vector<cv::Mat> raw_channels;
-    cv::split(raw,raw_channels);
+    cv::split(resized,raw_channels);
     raw_channels[0].convertTo(raw_channels[0],CV_32F,1/180.0);
     raw_channels[1].convertTo(raw_channels[1],CV_32F,1/255.0);
     raw_channels[2].convertTo(raw_channels[2],CV_32F,1/255.0);
-    size_t w0=raw.cols;
-    size_t h0=raw.rows;
-    const size_t required_pixels=w0*h0;
-    double coeff=(((double)h0/h)>((double)w0/w))? ((double)h0/h):((double)w0/w);
-    torch::Tensor input=torch::empty({0,h,w},torch::kFloat32);
-    dim3 block(32,32);
-    dim3 grid((w+31)/32,(h+31)/32);
-    if (required_pixels>d_buf->maxsize){
-        std::cout<<"Raw size exceed limit. Expanding buffer to "<<required_pixels<<"."<<std::endl;
-        CHECK_CUDA(cudaFree(d_buf->d_input));
-        d_buf->d_input=nullptr;
-        d_buf->maxsize=0;
-        CHECK_CUDA(cudaMalloc((void**)&d_buf->d_input,required_pixels*sizeof(float)));
-        d_buf->maxsize=required_pixels;
-    }
-    for (int i=0;i<3;i++){
-        CHECK_CUDA(cudaMemcpy(d_buf->d_input,raw_channels[i].ptr<float>(),required_pixels*sizeof(float),cudaMemcpyHostToDevice));
-        resize<<<grid,block>>>(d_buf->d_input,d_buf->d_output,w0,h0,w,h,coeff);
-        // Check launch errors here; the blocking copy also reports execution errors.
-        CHECK_CUDA(cudaGetLastError());
-        CHECK_CUDA(cudaMemcpy(d_buf->h_output,d_buf->d_output,w*h*sizeof(float),cudaMemcpyDeviceToHost));
-        input=torch::cat({input,torch::from_blob(d_buf->h_output,{1,h,w},torch::kFloat32).clone()},0);
-    }
+    auto opts=torch::TensorOptions().dtype(torch::kFloat32);
+    torch::Tensor input=torch::stack({
+            torch::from_blob(raw_channels[0].ptr<float>(),{h,w},opts),
+            torch::from_blob(raw_channels[1].ptr<float>(),{h,w},opts),
+            torch::from_blob(raw_channels[2].ptr<float>(),{h,w},opts)
+            },0);
     std::vector<torch::Tensor> target;        
     int64_t num_class=gesture_classes.size();
     for (int s=8;s<=32;s*=2){
@@ -241,10 +197,10 @@ torch::data::Example<torch::Tensor,std::vector<torch::Tensor> > YoloDataset::get
         auto locate=locatepic.accessor<float,3>();
         auto predict=predictpic.accessor<float,3>();
         for (int j=0;j<bboxes[index].size();j++){
-            double x1=((double)w0*bboxes[index][j][0]/(coeff*s));
-            double y1=((double)h0*bboxes[index][j][1]/(coeff*s));
-            double x2=((double)w0*(bboxes[index][j][2]+bboxes[index][j][0])/(coeff*s));
-            double y2=((double)h0*(bboxes[index][j][3]+bboxes[index][j][1])/(coeff*s));
+            double x1=((double)w0*bboxes[index][j][0]*scale/s);
+            double y1=((double)h0*bboxes[index][j][1]*scale/s);
+            double x2=((double)w0*(bboxes[index][j][2]+bboxes[index][j][0])*scale/s;
+            double y2=((double)h0*(bboxes[index][j][3]+bboxes[index][j][1])*scale/s;
             double xc=(x1+x2)/2;
             double yc=(y1+y2)/2;
             for (int y=(int)(yc-1.5);y<yc+1.5;y++){

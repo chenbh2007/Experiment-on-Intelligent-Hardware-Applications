@@ -18,7 +18,7 @@ find_package(cJSON CONFIG REQUIRED)
 # Build the split sources; train.cu retains the original single-file version.
 add_executable(train
     train.cpp
-    YoloDataset.cu
+    YoloDataset.cpp
     YoloDataset.hpp
     YOLOStructure.hpp
     toml.hpp

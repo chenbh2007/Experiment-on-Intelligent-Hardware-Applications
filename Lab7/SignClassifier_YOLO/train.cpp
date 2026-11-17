@@ -291,24 +291,26 @@ int main(int argc,char **argv){
 
     std::string train_picture_dir=config["data"]["train_picture_dir"].value_or("/path/to/dataset");
     std::string train_annotations_dir=config["data"]["train_annotations_dir"].value_or("/path/to/annotations"); 
-    size_t max_size=config["data"]["max_size"].value_or(512*1024);
-    yolo::YoloDataset train_dataset(train_annotations_dir,train_picture_dir,max_size);
+    int w=config["data"]["width"].value_or(512);
+    int h=config["data"]["height"].value_or(512);
+    yolo::YoloDataset train_dataset(train_annotations_dir,train_picture_dir,w,h);
 
     std::string eval_picture_dir=config["data"]["eval_picture_dir"].value_or("/path/to/eval_dataset");
     std::string eval_annotations_dir=config["data"]["eval_annotations_dir"].value_or("/path/to/eval_annotations");
-    yolo::YoloDataset eval_dataset(eval_annotations_dir,eval_picture_dir,max_size);
+    yolo::YoloDataset eval_dataset(eval_annotations_dir,eval_picture_dir,w,h);
 
     int batch_size=config["control"]["batch_size"].value_or(64);
     int opt_every_step=config["control"]["opt_every_step"].value_or(1);
     int test_every_step=config["control"]["test_every_step"].value_or(1000);
     int save_every_step=config["control"]["save_every_step"].value_or(200); 
+    int num_worker=config["control"]["workers"].value_or(4);
     auto train_dataloader=torch::data::make_data_loader(
             std::move(train_dataset).map(torch::data::transforms::Collate<yolo::Sample>(stack_batch)),
-            torch::data::DataLoaderOptions().batch_size(batch_size).workers(0)
+            torch::data::DataLoaderOptions().batch_size(batch_size).workers(num_worker)
             );
     auto eval_dataloader=torch::data::make_data_loader(
             std::move(eval_dataset).map(torch::data::transforms::Collate<yolo::Sample>(stack_batch)),
-            torch::data::DataLoaderOptions().batch_size(batch_size).workers(0)
+            torch::data::DataLoaderOptions().batch_size(batch_size).workers(num_worker)
             );
 
     float l_cls=config["loss"]["l_cls"].value_or(0.5f);
