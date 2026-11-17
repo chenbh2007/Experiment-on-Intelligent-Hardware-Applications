@@ -197,10 +197,10 @@ torch::data::Example<torch::Tensor,std::vector<torch::Tensor> > YoloDataset::get
         auto locate=locatepic.accessor<float,3>();
         auto predict=predictpic.accessor<float,3>();
         for (int j=0;j<bboxes[index].size();j++){
-            double x1=((double)w0*bboxes[index][j][0]*scale/s);
-            double y1=((double)h0*bboxes[index][j][1]*scale/s);
-            double x2=((double)w0*(bboxes[index][j][2]+bboxes[index][j][0])*scale/s;
-            double y2=((double)h0*(bboxes[index][j][3]+bboxes[index][j][1])*scale/s;
+            double x1=((double)w0*bboxes[index][j][0]*scale/(double)s);
+            double y1=((double)h0*bboxes[index][j][1]*scale/(double)s);
+            double x2=(double)w0*(bboxes[index][j][2]+bboxes[index][j][0])*scale/(double)s;
+            double y2=(double)h0*(bboxes[index][j][3]+bboxes[index][j][1])*scale/(double)s;
             double xc=(x1+x2)/2;
             double yc=(y1+y2)/2;
             for (int y=(int)(yc-1.5);y<yc+1.5;y++){
