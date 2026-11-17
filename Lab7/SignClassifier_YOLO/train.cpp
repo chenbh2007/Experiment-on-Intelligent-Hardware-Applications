@@ -10,10 +10,12 @@
 #include <numeric>
 
 static volatile sig_atomic_t is_running=1;
+#ifndef TRAIN_AS_LIBRARY
 void handler(int sig){
     (void)sig;
     is_running=0;
 }
+#endif
 
 yolo::Sample stack_batch(std::vector<yolo::Sample> samples){
     std::vector<torch::Tensor> inputs;
@@ -107,11 +109,12 @@ std::vector<torch::Tensor> getboxes(const std::vector<torch::Tensor> &output,flo
 }
 
 std::vector<torch::Tensor> nms(const std::vector<torch::Tensor> &boxes,float threshold,int max_det=-1){
-    int num_class=yolo::gesture_classes.size();
     std::vector<torch::Tensor> result;
+    int channel=boxes[0].size(1);
+    int num_class=boxes.size();
     for (int i=0;i<num_class&&is_running;i++){
         if (boxes[i].size(0)==0){
-            result.push_back(torch::empty({0,5},boxes[i].options().device(torch::kCPU)));
+            result.push_back(torch::empty({0,channel},boxes[i].options().device(torch::kCPU)));
             continue;
         }
         torch::Tensor cls_boxes=boxes[i];
@@ -259,6 +262,7 @@ std::ofstream open_tsv(const std::filesystem::path &p,const std::string &header)
     return ofs;
 }
 
+#ifndef TRAIN_AS_LIBRARY
 int main(int argc,char **argv){
     std::signal(SIGINT,handler);
     if (argc<2){
@@ -473,5 +477,5 @@ int main(int argc,char **argv){
     }
     return 0;
 }
-
+#endif
 

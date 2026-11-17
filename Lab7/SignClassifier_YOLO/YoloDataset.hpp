@@ -7,11 +7,15 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <opencv2/opencv.hpp>
+
 namespace yolo{
 using Sample=torch::data::Example<torch::Tensor,std::vector<torch::Tensor> >;
 
 extern std::map<std::string,int64_t> gesture_classes;
 extern std::vector<std::string> gesture_classes_dict;
+
+double resize(cv::Mat& src,cv::Mat& res,int target_w,int target_h);
 
 class YoloDataset:public torch::data::datasets::Dataset<YoloDataset,Sample>{
     private:
