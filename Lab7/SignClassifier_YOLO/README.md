@@ -25,11 +25,11 @@
 | --- | --- |
 | C++ 编译器 | 支持 C++20；Linux 使用与所选 CUDA Toolkit、LibTorch 兼容的 GCC，Windows 使用 MSVC x64 |
 | CMake | **3.24 或更新版本** |
-| LibTorch | PyTorch C++ 发行包；训练必须选择 CUDA 版本；Linux 应选择与系统编译器 ABI 兼容的版本 |
+| LibTorch | 可使用独立 C++ 发行包，或 Python PyTorch 安装中提供的 C++ 库；训练必须选择 CUDA 版本，Linux 应注意编译器 ABI 兼容性 |
 | NVIDIA GPU、驱动及 CUDA Toolkit | 训练需要 CUDA GPU；驱动、Toolkit、LibTorch 的 CUDA 版本须相互兼容 |
 | OpenCV | **4.x**，必需模块为 `core`、`imgproc`、`imgcodecs`；构建 `client` 还需 `highgui`、`videoio` |
 | cJSON | 提供 `<cjson/cJSON.h>`、CMake 配置包和 `cjson` 链接目标；注意不是 json-c |
-| Python、PyTorch、TensorBoard | 仅 `watch_tb.py` 需要；脚本要求 Python 3.10+，还需满足所安装 PyTorch 的 Python 版本要求 |
+| Python、PyTorch、TensorBoard | `watch_tb.py` 需要 Python PyTorch 和 TensorBoard；使用 Python PyTorch 提供 C++ 库时也需要相应 Python 环境；脚本要求 Python 3.10+，并满足所安装 PyTorch 的版本要求 |
 
 `train.cpp` 会检查 CUDA 可用性，不能直接在 CPU 上训练。`client` 支持 CPU 或 CUDA 推理；只使用 CPU 推理时可以选择 CPU 版 LibTorch，无需安装 CUDA Toolkit。工程没有自定义 CUDA 源文件，但 CUDA 版 LibTorch 的 CMake 配置仍可能需要 Toolkit 和 `nvcc`。
 
@@ -70,6 +70,12 @@ unzip /tmp/libtorch.zip -d "$HOME/deps"
 export LIBTORCH_ROOT="$HOME/deps/libtorch"
 ```
 
+如果当前 Python 环境已经安装匹配的 CUDA 版 PyTorch，可以跳过 ZIP 下载与解压，直接使用该安装中的 C++ 库。若尚未安装，可在 [PyTorch 下载页面](https://pytorch.org/get-started/locally/)选择 Linux、Pip、Python 和所需 CUDA 版本，执行页面给出的安装命令。激活对应 Python 环境后设置库根目录：
+
+```bash
+export LIBTORCH_ROOT="$(python -c 'from pathlib import Path; import torch; print(Path(torch.__file__).parent)')"
+```
+
 若 Toolkit 安装在 `/usr/local/cuda`，可设置以下环境变量；其他位置请替换路径：
 
 ```bash
@@ -91,6 +97,17 @@ cmake -S . -B build-linux -G Ninja \
 cmake --build build-linux --parallel 2
 ```
 
+使用 Python PyTorch 时，`CMAKE_PREFIX_PATH` 可以直接从当前环境获取，配置命令改为：
+
+```bash
+cmake -S . -B build-linux -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+cmake --build build-linux --parallel 2
+```
+
+该方法见 [LibTorch 官方安装说明](https://docs.pytorch.org/cppdocs/installing.html)。查询路径与配置构建时应使用同一个 Python 环境；训练还需确认 `python -c "import torch; print(torch.version.cuda, torch.cuda.is_available())"` 显示所需 CUDA 版本及 `True`。
+
 LibTorch 头文件和预编译头较占内存，可按机器内存调整并行数。默认构建训练程序；找到 OpenCV 的 `highgui` 和 `videoio` 时还会构建推理程序，否则 CMake 会提示跳过 `client`。
 
 ## Windows 安装与构建
@@ -103,6 +120,8 @@ LibTorch 头文件和预编译头较占内存，可按机器内存调整并行�
 2. 安装 [CMake](https://cmake.org/download/) 3.24+ 和 [Git for Windows](https://git-scm.com/download/win)，并加入 PATH。
 3. 训练时按 [NVIDIA Windows 安装指南](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)安装驱动及兼容的 CUDA Toolkit。运行 `nvidia-smi` 和 `nvcc --version` 检查安装。
 4. 从 [PyTorch 下载页面](https://pytorch.org/get-started/locally/)下载 Windows x64、CUDA、Release、包含依赖的 LibTorch ZIP，解压到例如 `C:\deps\libtorch`。
+
+也可使用 Python 环境中安装的 PyTorch，跳过独立 LibTorch ZIP。若尚未安装，先安装 [Python](https://www.python.org/downloads/)，再在 PyTorch 下载页面选择 Windows、Pip、Python 和所需 CUDA 版本，执行对应安装命令。
 
 使用 MSVC 构建。Windows 的 Debug 和 Release LibTorch ABI 不兼容，下文统一使用 Release；详见 [LibTorch 官方安装说明](https://docs.pytorch.org/cppdocs/installing.html)。
 
@@ -134,6 +153,23 @@ cmake -S . -B build-windows -G "Visual Studio 17 2022" -A x64 `
     "-DCMAKE_CXX_FLAGS=/bigobj /utf-8"
 cmake --build build-windows --config Release --parallel 2
 ```
+
+若使用 Python PyTorch，激活对应环境后，将上述配置与编译命令替换为：
+
+```powershell
+$env:LIBTORCH_ROOT = python -c "from pathlib import Path; import torch; print(Path(torch.__file__).parent)"
+$env:VCPKG_ROOT = "C:\deps\vcpkg"
+$torchCmakePrefixPath = python -c "import torch; print(torch.utils.cmake_prefix_path)"
+
+cmake -S . -B build-windows -G "Visual Studio 17 2022" -A x64 `
+    "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+    "-DVCPKG_TARGET_TRIPLET=x64-windows" `
+    "-DCMAKE_PREFIX_PATH=$torchCmakePrefixPath" `
+    "-DCMAKE_CXX_FLAGS=/bigobj /utf-8"
+cmake --build build-windows --config Release --parallel 2
+```
+
+训练时同样应确认该 Python 环境安装的是 CUDA 版 PyTorch，且 `python -c "import torch; print(torch.version.cuda, torch.cuda.is_available())"` 显示所需 CUDA 版本及 `True`。
 
 运行前，在同一个 PowerShell 会话中加入动态库目录：
 
@@ -307,7 +343,7 @@ camera = "/dev/video0"
 
 ### TensorBoard（可选）
 
-仅构建、运行 C++ 程序时不需要 Python PyTorch。使用 `watch_tb.py` 时，先准备 Python 3.10+ 环境，安装 Python PyTorch 与 TensorBoard；日志转换可使用 CPU 版 PyTorch，无需与 C++ LibTorch 共用安装目录。
+使用独立 LibTorch 发行包构建、运行 C++ 程序时不需要 Python PyTorch。使用 `watch_tb.py` 时，先准备 Python 3.10+ 环境，安装 Python PyTorch 与 TensorBoard；日志转换可使用单独环境中的 CPU 版 PyTorch，无需与 C++ LibTorch 共用安装目录。
 
 Linux：
 
